@@ -3,7 +3,7 @@ from django.db.models.query import sql
 
 from django.contrib.gis.db.models.constants import ALL_TERMS
 from django.contrib.gis.db.models.fields import GeometryField
-from django.contrib.gis.db.models.sql import aggregates as gis_aggregates
+from django.contrib.gis.db.models import aggregates as gis_aggregates
 from django.contrib.gis.db.models.sql.conversion import AreaField, DistanceField, GeomField
 from django.contrib.gis.db.models.sql.where import GeoWhereNode
 from django.contrib.gis.geometry.backend import Geometry
@@ -69,9 +69,9 @@ class GeoQuery(sql.Query):
         # Remove any aggregates marked for reduction from the subquery
         # and move them to the outer AggregateQuery.
         connection = connections[using]
-        for alias, aggregate in self.aggregate_select.items():
-            if isinstance(aggregate, gis_aggregates.GeoAggregate):
-                if not getattr(aggregate, 'is_extent', False) or connection.ops.oracle:
+        for alias, annotation in self.annotation_select.items():
+            if isinstance(annotation, gis_aggregates.GeoAggregate):
+                if not getattr(annotation, 'is_extent', False) or connection.ops.oracle:
                     self.extra_select_fields[alias] = GeomField()
         return super(GeoQuery, self).get_aggregation(using, force_subq)
 
