@@ -9,7 +9,6 @@ from django.db.models.query_utils import select_related_descend, QueryWrapper
 from django.db.models.sql.constants import (CURSOR, SINGLE, MULTI, NO_RESULTS,
         ORDER_DIR, GET_ITERATOR_CHUNK_SIZE, SelectInfo)
 from django.db.models.sql.datastructures import EmptyResultSet
-from django.db.models.sql.expressions import SQLEvaluator
 from django.db.models.sql.query import get_order_dir, Query
 from django.db.utils import DatabaseError
 from django.utils import six
@@ -846,7 +845,7 @@ class SQLInsertCompiler(SQLCompiler):
         elif hasattr(field, 'get_placeholder'):
             # Some fields (e.g. geo fields) need special munging before
             # they can be inserted.
-            return field.get_placeholder(val, self.connection)
+            return field.get_placeholder(val, self, self.connection)
         else:
             # Return the common case for the placeholder
             return '%s'
@@ -964,12 +963,13 @@ class SQLUpdateCompiler(SQLCompiler):
 
             # Getting the placeholder for the field.
             if hasattr(field, 'get_placeholder'):
-                placeholder = field.get_placeholder(val, self.connection)
+                placeholder = field.get_placeholder(val, self, self.connection)
             else:
                 placeholder = '%s'
 
             if hasattr(val, 'evaluate'):
-                val = SQLEvaluator(val, self.query, allow_joins=False)
+                # If val is a query expression, prepare it
+                val.prepare(self.query, allow_joins=False)
             name = field.column
             if hasattr(val, 'as_sql'):
                 sql, params = self.compile(val)
