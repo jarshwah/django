@@ -1,7 +1,9 @@
 import datetime
 
+from django.core.exceptions import FieldError
 from django.db.models.aggregates import refs_aggregate
 from django.db.models.constants import LOOKUP_SEP
+from django.db.models.fields import FieldDoesNotExist
 from django.utils import tree
 
 
@@ -25,14 +27,24 @@ class ExpressionNode(tree.Node):
     BITAND = '&'
     BITOR = '|'
 
+    # hooks for adding functionality
+    validate_fields = False
+
+    # TODO (Josh) an expression node also needs to accept an
+    # expressionnode - figure that out
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
             raise TypeError('You have to specify a connector.')
         super(ExpressionNode, self).__init__(children, connector, negated)
+        self.col = None
 
     def _combine(self, other, connector, reversed, node=None):
         if isinstance(other, datetime.timedelta):
             return DateModifierNode([self, other], connector)
+
+        if not isinstance(other, ExpressionNode):
+            # everything must be some kind of ExpressionNode, so ValueNode is the fallback
+            other = ValueNode(other)
 
         if reversed:
             obj = ExpressionNode([other], connector)
@@ -54,15 +66,97 @@ class ExpressionNode(tree.Node):
     def prepare_database_save(self, unused):
         return self
 
-    ###################
-    # VISITOR METHODS #
-    ###################
+    #############
+    # EVALUATOR #
+    #############
 
-    def prepare(self, evaluator, query, allow_joins):
-        return evaluator.prepare_node(self, query, allow_joins)
+    def relabeled_clone(self, change_map):
+        print "called relabeled -> we must implement it =("
+        return self
 
-    def evaluate(self, evaluator, qn, connection):
-        return evaluator.evaluate_node(self, qn, connection)
+    def as_sql(self, qn, connection):
+        expression_wrapper = self.get_expression_wrapper(qn, connection)
+        expressions = []
+        expression_params = []
+        for child in self.children:
+            wrapper = child.get_expression_wrapper(qn, connection)
+            if wrapper is not None and expression_wrapper is not None:
+                raise TypeError("Only one child node may specify a wrapping function")
+            expression_wrapper = wrapper
+            sql, params = child.as_sql(qn, connection)
+            expressions.append(sql)
+            expression_params.extend(params)
+
+        if expression_wrapper is None:
+            if len(self.children) > 1:
+                expression_wrapper = '(%s)'
+            expression_wrapper = '%s'
+
+        if self.connector is self.default:
+            return self.get_sql(qn, connection), expression_params
+
+        sql = connection.ops.combine_expression(self.connector, expressions)
+        return expression_wrapper % (sql), expression_params
+
+
+    def prepare(self, query=None, allow_joins=True, reuse=None):
+        if query is None:
+            # handle lookups
+            return self
+
+        if not allow_joins and hasattr(self, 'name') and LOOKUP_SEP in self.name:
+            raise FieldError("Joined field references are not permitted in this query")
+
+        for child in self.children:
+            reuse = child.prepare(query, allow_joins, reuse)
+
+        if self.validate_fields:
+            self.setup_cols(query, reuse)
+
+        return reuse
+
+    def setup_cols(self, query, reuse):
+        field_list = self.name.split(LOOKUP_SEP)
+        if self.name in query.aggregates:
+            self.col = query.aggregate_select[self.name]
+            return reuse
+        else:
+            try:
+                field, sources, opts, join_list, path = query.setup_joins(
+                    field_list, query.get_meta(),
+                    query.get_initial_alias(), reuse)
+                self._used_joins = join_list
+                targets, _, join_list = query.trim_joins(sources, join_list, path)
+                if reuse is not None:
+                    reuse.update(join_list)
+                for t in targets:
+                    self.col = (join_list[-1], t.column)
+                return reuse
+            except FieldDoesNotExist:
+                raise FieldError("Cannot resolve keyword %r into field. "
+                                 "Choices are: %s" % (self.name,
+                                                      [f.name for f in self.opts.fields]))
+
+    def get_cols(self):
+        cols = []
+        for child in self.children:
+            cols.extend(child.get_cols())
+        if isinstance(col, tuple):
+            cols.append(col)
+        return cols
+
+    def get_sql(self, qn, connection):
+        if len(self.children) > 1:
+            return '(%s)'
+        return '%s'
+
+    def get_expression_wrapper(self, qn, connection):
+        """
+        Allows children to specify a wrapping construct of the entire sub-expression. This
+        is useful if a node uses a function instead of an infix operator, such as SQLITE
+        calling django_format_dtdelta() on the entire expression.
+        """
+        return None
 
     #############
     # OPERATORS #
@@ -141,15 +235,31 @@ class F(ExpressionNode):
     """
     An expression representing the value of the given field.
     """
+
+    validate_fields = True
+
     def __init__(self, name):
         super(F, self).__init__(None, None, False)
         self.name = name
 
-    def prepare(self, evaluator, query, allow_joins):
-        return evaluator.prepare_leaf(self, query, allow_joins)
+    def get_sql(self, qn, connection):
+        if hasattr(self.col, 'as_sql'):
+            return self.col.as_sql(qn, connection)
+        return '%s.%s' % (qn(self.col[0]), qn(self.col[1]))
 
-    def evaluate(self, evaluator, qn, connection):
-        return evaluator.evaluate_leaf(self, qn, connection)
+
+class ValueNode(ExpressionNode):
+    """
+    Represents a wrapped value as a node, allowing all children
+    to act as nodes
+    """
+
+    def __init__(self, value):
+        super(ValueNode, self).__init__(None, None, False)
+        self.value = value
+
+    def get_sql(self, qn, connection):
+        return '%s' % self.value
 
 
 class DateModifierNode(ExpressionNode):
@@ -187,5 +297,11 @@ class DateModifierNode(ExpressionNode):
             raise TypeError('Connector must be + or -, not %s' % connector)
         super(DateModifierNode, self).__init__(children, connector, negated)
 
-    def evaluate(self, evaluator, qn, connection):
-        return evaluator.evaluate_date_modifier_node(self, qn, connection)
+    def as_sql(self, qn, connection):
+        field, timedelta = children
+        sql, params = field.as_sql(qn, connection)
+
+        if (timedelta.days == timedelta.seconds == timedelta.microseconds == 0):
+            return sql, params
+
+        return connection.ops.date_interval_sql(sql, self.connector, timedelta), params
