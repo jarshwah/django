@@ -8,7 +8,6 @@ from django.db.models.query_utils import select_related_descend, QueryWrapper
 from django.db.models.sql.constants import (SINGLE, MULTI, ORDER_DIR,
         GET_ITERATOR_CHUNK_SIZE, SelectInfo)
 from django.db.models.sql.datastructures import EmptyResultSet
-from django.db.models.sql.expressions import SQLEvaluator
 from django.db.models.sql.query import get_order_dir, Query
 from django.db.utils import DatabaseError
 from django.utils import six
@@ -943,7 +942,8 @@ class SQLUpdateCompiler(SQLCompiler):
                 placeholder = '%s'
 
             if hasattr(val, 'evaluate'):
-                val = SQLEvaluator(val, self.query, allow_joins=False)
+                # If val is a query expression, prepare it
+                val.prepare(self.query, allow_joins=False)
             name = field.column
             if hasattr(val, 'as_sql'):
                 sql, params = self.compile(val)

@@ -78,7 +78,6 @@ class Aggregate(RegisterLookupMixin):
     def as_sql(self, qn, connection):
         "Return the aggregate, rendered as SQL with parameters."
         params = []
-
         if hasattr(self.col, 'as_sql'):
             field_name, params = self.col.as_sql(qn, connection)
         elif isinstance(self.col, (list, tuple)):
@@ -91,7 +90,6 @@ class Aggregate(RegisterLookupMixin):
             'field': field_name
         }
         substitutions.update(self.extra)
-
         return self.sql_template % substitutions, params
 
     def get_group_by_cols(self):
