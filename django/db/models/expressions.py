@@ -1,3 +1,4 @@
+import copy
 import datetime
 
 from django.core.exceptions import FieldError
@@ -31,7 +32,7 @@ class ExpressionNode(tree.Node):
     validate_fields = False
 
     # TODO (Josh) an expression node also needs to accept an
-    # expressionnode - figure that out
+    # expressionnode - figure that out later when implementing AggregateExpression
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
             raise TypeError('You have to specify a connector.')
@@ -70,9 +71,26 @@ class ExpressionNode(tree.Node):
     # EVALUATOR #
     #############
 
+    def __deepcopy__(self, memodict):
+        clone = super(ExpressionNode, self).__deepcopy__(memodict)
+        clone.col = self.col
+        if hasattr(self, 'name'):
+            clone.name = self.name
+        if hasattr(self, 'value'):
+            clone.value = self.value
+        return clone
+
     def relabeled_clone(self, change_map):
-        print "called relabeled -> we must implement it =("
-        return self
+        clone = copy.deepcopy(self)
+        for child in clone.children:
+            if hasattr(child, 'relabeled_clone'):
+                child.relabeled_clone(change_map)
+
+        if hasattr(clone.col, 'relabeled_clone'):
+            clone.col = clone.col.relabeled_clone(change_map)
+        else:
+            clone.col = (change_map.get(clone.col[0], clone.col[0]), clone.col[1])
+        return clone
 
     def as_sql(self, qn, connection):
         expression_wrapper = self.get_expression_wrapper(qn, connection)
@@ -88,9 +106,10 @@ class ExpressionNode(tree.Node):
             expression_params.extend(params)
 
         if expression_wrapper is None:
-            if len(self.children) > 1:
-                expression_wrapper = '(%s)'
             expression_wrapper = '%s'
+            if len(self.children) > 1:
+                # order of precedence
+                expression_wrapper = '(%s)'
 
         if self.connector is self.default:
             return self.get_sql(qn, connection), expression_params
@@ -141,8 +160,8 @@ class ExpressionNode(tree.Node):
         cols = []
         for child in self.children:
             cols.extend(child.get_cols())
-        if isinstance(col, tuple):
-            cols.append(col)
+        if isinstance(self.col, tuple):
+            cols.append(self.col)
         return cols
 
     def get_sql(self, qn, connection):
