@@ -29,7 +29,7 @@ class ExpressionNode(tree.Node):
     BITOR = '|'
 
     # hooks for adding functionality
-    validate_fields = False
+    validate_name = False
 
     # TODO (Josh) an expression node also needs to accept an
     # expressionnode - figure that out later when implementing AggregateExpression
@@ -60,9 +60,12 @@ class ExpressionNode(tree.Node):
             return any(child.contains_aggregate(existing_aggregates)
                        for child in self.children
                        if hasattr(child, 'contains_aggregate'))
-        else:
+
+        if self.validate_name:
             return refs_aggregate(self.name.split(LOOKUP_SEP),
                                   existing_aggregates)
+
+        return False
 
     def prepare_database_save(self, unused):
         return self
@@ -129,7 +132,7 @@ class ExpressionNode(tree.Node):
         for child in self.children:
             reuse = child.prepare(query, allow_joins, reuse)
 
-        if self.validate_fields:
+        if self.validate_name:
             self.setup_cols(query, reuse)
 
         return reuse
@@ -255,7 +258,7 @@ class F(ExpressionNode):
     An expression representing the value of the given field.
     """
 
-    validate_fields = True
+    validate_name = True
 
     def __init__(self, name):
         super(F, self).__init__(None, None, False)
