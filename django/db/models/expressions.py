@@ -74,25 +74,20 @@ class ExpressionNode(tree.Node):
     # EVALUATOR #
     #############
 
-    def __deepcopy__(self, memodict):
-        clone = super(ExpressionNode, self).__deepcopy__(memodict)
-        clone.col = self.col
-        if hasattr(self, 'name'):
-            clone.name = self.name
-        if hasattr(self, 'value'):
-            clone.value = self.value
-        return clone
-
     def relabeled_clone(self, change_map):
-        clone = copy.deepcopy(self)
-        for child in clone.children:
-            if hasattr(child, 'relabeled_clone'):
-                child.relabeled_clone(change_map)
-
+        clone = copy.copy(self)
         if hasattr(clone.col, 'relabeled_clone'):
             clone.col = clone.col.relabeled_clone(change_map)
-        else:
+        elif clone.col:
             clone.col = (change_map.get(clone.col[0], clone.col[0]), clone.col[1])
+
+        # rebuild the clones children with new relabeled clones..
+        new_children = [
+            child.relabeled_clone(change_map) if hasattr(child, 'relabeled_clone')
+            else child
+            for child in clone.children]
+        clone.children = new_children
+
         return clone
 
     def as_sql(self, qn, connection):
@@ -115,33 +110,34 @@ class ExpressionNode(tree.Node):
                 expression_wrapper = '(%s)'
 
         if self.connector is self.default:
-            return self.get_sql(qn, connection), expression_params
+            return self.get_sql(qn, connection)
 
         sql = connection.ops.combine_expression(self.connector, expressions)
-        return expression_wrapper % (sql), expression_params
+        return expression_wrapper % sql, expression_params
 
+    def evaluate(self, qn, connection):
+        # this method is here for compatability purposes
+        return self.as_sql(qn, connection)
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
-        if query is None:
-            # handle lookups
-            return self
-
         if not allow_joins and hasattr(self, 'name') and LOOKUP_SEP in self.name:
             raise FieldError("Joined field references are not permitted in this query")
 
         for child in self.children:
-            reuse = child.prepare(query, allow_joins, reuse)
+            if hasattr(child, 'prepare'):
+                child.prepare(query, allow_joins, reuse)
 
         if self.validate_name:
             self.setup_cols(query, reuse)
 
-        return reuse
+        return self
 
     def setup_cols(self, query, reuse):
+        if query is None:
+            return
         field_list = self.name.split(LOOKUP_SEP)
         if self.name in query.aggregates:
             self.col = query.aggregate_select[self.name]
-            return reuse
         else:
             try:
                 field, sources, opts, join_list, path = query.setup_joins(
@@ -153,7 +149,6 @@ class ExpressionNode(tree.Node):
                     reuse.update(join_list)
                 for t in targets:
                     self.col = (join_list[-1], t.column)
-                return reuse
             except FieldDoesNotExist:
                 raise FieldError("Cannot resolve keyword %r into field. "
                                  "Choices are: %s" % (self.name,
@@ -169,8 +164,8 @@ class ExpressionNode(tree.Node):
 
     def get_sql(self, qn, connection):
         if len(self.children) > 1:
-            return '(%s)'
-        return '%s'
+            return '(%s)', []
+        return '%s', []
 
     def get_expression_wrapper(self, qn, connection):
         """
@@ -267,7 +262,7 @@ class F(ExpressionNode):
     def get_sql(self, qn, connection):
         if hasattr(self.col, 'as_sql'):
             return self.col.as_sql(qn, connection)
-        return '%s.%s' % (qn(self.col[0]), qn(self.col[1]))
+        return '%s.%s' % (qn(self.col[0]), qn(self.col[1])), []
 
 
 class ValueNode(ExpressionNode):
@@ -281,7 +276,7 @@ class ValueNode(ExpressionNode):
         self.value = value
 
     def get_sql(self, qn, connection):
-        return '%s' % self.value
+        return '%s' % self.value, []
 
 
 class DateModifierNode(ExpressionNode):
@@ -320,7 +315,7 @@ class DateModifierNode(ExpressionNode):
         super(DateModifierNode, self).__init__(children, connector, negated)
 
     def as_sql(self, qn, connection):
-        field, timedelta = children
+        field, timedelta = self.children
         sql, params = field.as_sql(qn, connection)
 
         if (timedelta.days == timedelta.seconds == timedelta.microseconds == 0):
