@@ -30,9 +30,8 @@ class ExpressionNode(tree.Node):
 
     # hooks for adding functionality
     validate_name = False
+    is_aggregate = False
 
-    # TODO (Josh) an expression node also needs to accept an
-    # expressionnode - figure that out later when implementing AggregateExpression
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
             raise TypeError('You have to specify a connector.')
@@ -163,6 +162,7 @@ class ExpressionNode(tree.Node):
         return cols
 
     def get_sql(self, qn, connection):
+        # TODO (Josh): this is a template, but derived produce full sql..
         if len(self.children) > 1:
             return '(%s)', []
         return '%s', []
@@ -322,3 +322,80 @@ class DateModifierNode(ExpressionNode):
             return sql, params
 
         return connection.ops.date_interval_sql(sql, self.connector, timedelta), params
+
+
+class AggregateNode(ExpressionNode):
+    # what does an aggregate need to do?
+    #   - inform compiler that this is an aggregate
+    #   - produce the sql required
+    #   - possibly hold on to the alias?
+
+    is_aggregate = True
+    is_ordinal = False
+    is_computed = False
+    sql_function = ''
+    aggregate_name = ''
+
+    def __init__(self, expression):
+        super(AggregateNode, self).__init__(None, None, False)
+        # expression may be a field (str) or another ExpressionNode
+        self.expression = expression
+        if not isinstance(self.expression, ExpressionNode):
+            self.validate_name = True
+            self.name = expression
+
+    def get_sql(self, qn, connection):
+        return '%s(%s)' % (self.sql_function, self.WHAT?)
+
+
+class Avg(AggregateNode):
+    is_computed = True
+    sql_function = 'AVG'
+    aggregate_name = 'Avg'
+
+
+class Count(AggregateNode):
+    is_ordinal = True
+    sql_function = 'COUNT'
+    aggregate_name = 'Count'
+
+    def __init__(self, expression, distinct=False):
+        super(Count, self).__init__(expression)
+        self.distinct = distinct
+
+    def get_sql(self, qn, connection):
+        distinct = 'DISTINCT ' if self.distinct else ''
+        return '%s(%s%s)' % (self.sql_function, distinct, self.WHAT?)
+
+
+class Max(AggregateNode):
+    sql_function = 'MAX'
+    aggregate_name = 'Max'
+
+
+class Min(AggregateNode):
+    sql_function = 'MIN'
+    aggregate_name = 'Min'
+
+
+class StdDev(AggregateNode):
+    is_computed = True
+    aggregate_name = 'StdDev'
+
+    def __init__(self, expression, sample=False):
+        super(StdDev, self).__init__(expression)
+        self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
+
+
+class Sum(AggregateNode):
+    sql_function = 'SUM'
+    aggregate_name = 'Sum'
+
+
+class Variance(AggregateNode):
+    is_computed = True
+    aggregate_name = 'Variance'
+
+    def __init__(self, expression, sample=False):
+        super(Variance, self).__init__(expression)
+        self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
