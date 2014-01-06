@@ -4,7 +4,7 @@ import datetime
 from django.core.exceptions import FieldError
 from django.db.models.aggregates import refs_aggregate
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.fields import FieldDoesNotExist
+from django.db.models.fields import FieldDoesNotExist, IntegerField, FloatField
 from django.utils import tree
 
 
@@ -12,6 +12,10 @@ class ExpressionNode(tree.Node):
     """
     Base class for all query expressions.
     """
+
+    # TODO (Josh): allow @add_implementation to change how as_sql generates
+    # its output
+
     # Arithmetic connectors
     ADD = '+'
     SUB = '-'
@@ -30,6 +34,8 @@ class ExpressionNode(tree.Node):
 
     # hooks for adding functionality
     validate_name = False
+    wraps_expression = False
+
     is_aggregate = False
 
     def __init__(self, children=None, connector=None, negated=False):
@@ -87,36 +93,33 @@ class ExpressionNode(tree.Node):
             for child in clone.children]
         clone.children = new_children
 
+        if self.wraps_expression:
+            clone.expression = clone.expression.relabeled_clone(change_map)
+
         return clone
 
-    def as_sql(self, qn, connection):
-        expression_wrapper = self.get_expression_wrapper(qn, connection)
+    def as_sql(self, compiler, connection):
         expressions = []
         expression_params = []
         for child in self.children:
-            wrapper = child.get_expression_wrapper(qn, connection)
-            if wrapper is not None and expression_wrapper is not None:
-                raise TypeError("Only one child node may specify a wrapping function")
-            expression_wrapper = wrapper
-            sql, params = child.as_sql(qn, connection)
+            sql, params = compiler.compile(child)
             expressions.append(sql)
             expression_params.extend(params)
 
-        if expression_wrapper is None:
-            expression_wrapper = '%s'
-            if len(self.children) > 1:
-                # order of precedence
-                expression_wrapper = '(%s)'
-
         if self.connector is self.default:
-            return self.get_sql(qn, connection)
+            return self.get_sql(compiler, connection)
+
+        expression_wrapper = '%s'
+        if len(self.children) > 1:
+            # order of precedence
+            expression_wrapper = '(%s)'
 
         sql = connection.ops.combine_expression(self.connector, expressions)
         return expression_wrapper % sql, expression_params
 
-    def evaluate(self, qn, connection):
+    def evaluate(self, compiler, connection):
         # this method is here for compatability purposes
-        return self.as_sql(qn, connection)
+        return self.as_sql(compiler, connection)
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
         if not allow_joins and hasattr(self, 'name') and LOOKUP_SEP in self.name:
@@ -125,6 +128,9 @@ class ExpressionNode(tree.Node):
         for child in self.children:
             if hasattr(child, 'prepare'):
                 child.prepare(query, allow_joins, reuse)
+
+        if self.wraps_expression:
+            self.expression.prepare(query, allow_joins, reuse)
 
         if self.validate_name:
             self.setup_cols(query, reuse)
@@ -157,23 +163,14 @@ class ExpressionNode(tree.Node):
         cols = []
         for child in self.children:
             cols.extend(child.get_cols())
+        if self.wraps_expression:
+            cols.extend(self.expression.get_cols())
         if isinstance(self.col, tuple):
             cols.append(self.col)
         return cols
 
-    def get_sql(self, qn, connection):
-        # TODO (Josh): this is a template, but derived produce full sql..
-        if len(self.children) > 1:
-            return '(%s)', []
-        return '%s', []
-
-    def get_expression_wrapper(self, qn, connection):
-        """
-        Allows children to specify a wrapping construct of the entire sub-expression. This
-        is useful if a node uses a function instead of an infix operator, such as SQLITE
-        calling django_format_dtdelta() on the entire expression.
-        """
-        return None
+    def get_sql(self, compiler, connection):
+        return '', []
 
     #############
     # OPERATORS #
@@ -259,10 +256,10 @@ class F(ExpressionNode):
         super(F, self).__init__(None, None, False)
         self.name = name
 
-    def get_sql(self, qn, connection):
+    def get_sql(self, compiler, connection):
         if hasattr(self.col, 'as_sql'):
-            return self.col.as_sql(qn, connection)
-        return '%s.%s' % (qn(self.col[0]), qn(self.col[1])), []
+            return self.col.as_sql(compiler, connection)
+        return '%s.%s' % (compiler(self.col[0]), compiler(self.col[1])), []
 
 
 class ValueNode(ExpressionNode):
@@ -275,7 +272,7 @@ class ValueNode(ExpressionNode):
         super(ValueNode, self).__init__(None, None, False)
         self.value = value
 
-    def get_sql(self, qn, connection):
+    def get_sql(self, compiler, connection):
         return '%s' % self.value, []
 
 
@@ -314,9 +311,9 @@ class DateModifierNode(ExpressionNode):
             raise TypeError('Connector must be + or -, not %s' % connector)
         super(DateModifierNode, self).__init__(children, connector, negated)
 
-    def as_sql(self, qn, connection):
+    def as_sql(self, compiler, connection):
         field, timedelta = self.children
-        sql, params = field.as_sql(qn, connection)
+        sql, params = field.as_sql(compiler, connection)
 
         if (timedelta.days == timedelta.seconds == timedelta.microseconds == 0):
             return sql, params
@@ -324,78 +321,95 @@ class DateModifierNode(ExpressionNode):
         return connection.ops.date_interval_sql(sql, self.connector, timedelta), params
 
 
-class AggregateNode(ExpressionNode):
+class Aggregate(ExpressionNode):
     # what does an aggregate need to do?
     #   - inform compiler that this is an aggregate
     #   - produce the sql required
     #   - possibly hold on to the alias?
 
+    # what needs doing?
+    #   - modify query.annotate to accept all types of expression nodes
+    #   - modify query.aggregate to accept Aggregate Nodes
+    #   - potentially modify compiler.py to use different value types
+
     is_aggregate = True
+    wraps_expression = True
     is_ordinal = False
     is_computed = False
-    sql_function = ''
-    aggregate_name = ''
+    sql_template = '%(function)s(%(field)s)'
+    sql_function = None
+    aggregate_name = None
 
-    def __init__(self, expression):
-        super(AggregateNode, self).__init__(None, None, False)
-        # expression may be a field (str) or another ExpressionNode
+    def __init__(self, expression, **extra):
+        if not isinstance(expression, ExpressionNode):
+            self.original_lookup = expression
+            # handle traditional string fields by wrapping
+            expression = F(expression)
         self.expression = expression
-        if not isinstance(self.expression, ExpressionNode):
-            self.validate_name = True
-            self.name = expression
+        self.extra = extra
+        super(Aggregate, self).__init__(None, None, False)
 
-    def get_sql(self, qn, connection):
-        return '%s(%s)' % (self.sql_function, self.WHAT?)
+    def _default_alias(self):
+        if not hasattr(self, 'original_lookup'):
+            raise TypeError("Must supply an alias for complex aggregates")
+        return '%s__%s' % (self.original_lookup, self.name.lower())
+    default_alias = property(_default_alias)
+
+    def get_sql(self, compiler, connection):
+        sql, params = compiler.compile(self.expression)
+        substitutions = {
+            'function': self.sql_function,
+            'field': sql
+        }
+        substitutions.update(self.extra)
+        return self.sql_template % substitutions, params
 
 
-class Avg(AggregateNode):
+class Avg(Aggregate):
     is_computed = True
     sql_function = 'AVG'
     aggregate_name = 'Avg'
 
 
-class Count(AggregateNode):
+class Count(Aggregate):
     is_ordinal = True
     sql_function = 'COUNT'
     aggregate_name = 'Count'
+    sql_template = '%(function)s(%(distinct)s%(field)s)'
 
-    def __init__(self, expression, distinct=False):
-        super(Count, self).__init__(expression)
+    def __init__(self, expression, distinct=False, **extra):
         self.distinct = distinct
-
-    def get_sql(self, qn, connection):
-        distinct = 'DISTINCT ' if self.distinct else ''
-        return '%s(%s%s)' % (self.sql_function, distinct, self.WHAT?)
+        super(Count, self).__init__(expression, distinct='DISTINCT ' if distinct else '', **extra)
 
 
-class Max(AggregateNode):
+class Max(Aggregate):
     sql_function = 'MAX'
     aggregate_name = 'Max'
 
 
-class Min(AggregateNode):
+class Min(Aggregate):
     sql_function = 'MIN'
     aggregate_name = 'Min'
 
 
-class StdDev(AggregateNode):
+class StdDev(Aggregate):
     is_computed = True
     aggregate_name = 'StdDev'
 
-    def __init__(self, expression, sample=False):
-        super(StdDev, self).__init__(expression)
+    def __init__(self, expression, sample=False, **extra):
+        super(StdDev, self).__init__(expression, **extra)
         self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
 
 
-class Sum(AggregateNode):
+class Sum(Aggregate):
     sql_function = 'SUM'
     aggregate_name = 'Sum'
 
 
-class Variance(AggregateNode):
+class Variance(Aggregate):
     is_computed = True
     aggregate_name = 'Variance'
 
-    def __init__(self, expression, sample=False):
-        super(Variance, self).__init__(expression)
+    def __init__(self, expression, sample=False, **extra):
+        super(Variance, self).__init__(expression, **extra)
         self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
