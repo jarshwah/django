@@ -2,9 +2,10 @@ import copy
 import datetime
 
 from django.core.exceptions import FieldError
-from django.db.models.aggregates import refs_aggregate
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields import FieldDoesNotExist, IntegerField, FloatField
+from django.db.models.query_utils import refs_aggregate
+from django.db.models.sql.datastructures import Col
 from django.utils import tree
 
 
@@ -43,6 +44,8 @@ class ExpressionNode(tree.Node):
             raise TypeError('You have to specify a connector.')
         super(ExpressionNode, self).__init__(children, connector, negated)
         self.col = None
+        self.source = None
+
 
     def _combine(self, other, connector, reversed, node=None):
         if isinstance(other, datetime.timedelta):
@@ -70,7 +73,10 @@ class ExpressionNode(tree.Node):
             return refs_aggregate(self.name.split(LOOKUP_SEP),
                                   existing_aggregates)
 
-        return False
+        if self.wraps_expression:
+            return self.expression.contains_aggregate(existing_aggregates)
+
+        return False, ()
 
     def prepare_database_save(self, unused):
         return self
@@ -122,7 +128,7 @@ class ExpressionNode(tree.Node):
         return self.as_sql(compiler, connection)
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
-        if not allow_joins and hasattr(self, 'name') and LOOKUP_SEP in self.name:
+        if not allow_joins and self.validate_name and LOOKUP_SEP in self.name:
             raise FieldError("Joined field references are not permitted in this query")
 
         for child in self.children:
@@ -153,7 +159,11 @@ class ExpressionNode(tree.Node):
                 if reuse is not None:
                     reuse.update(join_list)
                 for t in targets:
-                    self.col = (join_list[-1], t.column)
+                    source = self.source if self.source is not None else sources[0]
+                    self.col = Col(join_list[-1], t, source)
+                    #self.col = (join_list[-1], t.column)
+                if self.source is None:
+                    self.source = sources[0]
             except FieldDoesNotExist:
                 raise FieldError("Cannot resolve keyword %r into field. "
                                  "Choices are: %s" % (self.name,
@@ -168,6 +178,14 @@ class ExpressionNode(tree.Node):
         if isinstance(self.col, tuple):
             cols.append(self.col)
         return cols
+
+    def get_sources(self):
+        sources = [self.source] if self.source is not None else []
+        for child in self.children:
+            sources.extend(child.get_sources())
+        if self.wraps_expression:
+            sources.extend(self.expression.get_sources())
+        return sources
 
     def get_sql(self, compiler, connection):
         return '', []
@@ -259,7 +277,8 @@ class F(ExpressionNode):
     def get_sql(self, compiler, connection):
         if hasattr(self.col, 'as_sql'):
             return self.col.as_sql(compiler, connection)
-        return '%s.%s' % (compiler(self.col[0]), compiler(self.col[1])), []
+        qn = compiler
+        return '%s.%s' % (qn(self.col[0]), qn(self.col[1])), []
 
 
 class ValueNode(ExpressionNode):
@@ -268,12 +287,12 @@ class ValueNode(ExpressionNode):
     to act as nodes
     """
 
-    def __init__(self, value):
+    def __init__(self, name):
         super(ValueNode, self).__init__(None, None, False)
-        self.value = value
+        self.name = name
 
     def get_sql(self, compiler, connection):
-        return '%s' % self.value, []
+        return '%s' % self.name, []
 
 
 class DateModifierNode(ExpressionNode):
@@ -319,97 +338,3 @@ class DateModifierNode(ExpressionNode):
             return sql, params
 
         return connection.ops.date_interval_sql(sql, self.connector, timedelta), params
-
-
-class Aggregate(ExpressionNode):
-    # what does an aggregate need to do?
-    #   - inform compiler that this is an aggregate
-    #   - produce the sql required
-    #   - possibly hold on to the alias?
-
-    # what needs doing?
-    #   - modify query.annotate to accept all types of expression nodes
-    #   - modify query.aggregate to accept Aggregate Nodes
-    #   - potentially modify compiler.py to use different value types
-
-    is_aggregate = True
-    wraps_expression = True
-    is_ordinal = False
-    is_computed = False
-    sql_template = '%(function)s(%(field)s)'
-    sql_function = None
-    aggregate_name = None
-
-    def __init__(self, expression, **extra):
-        if not isinstance(expression, ExpressionNode):
-            self.original_lookup = expression
-            # handle traditional string fields by wrapping
-            expression = F(expression)
-        self.expression = expression
-        self.extra = extra
-        super(Aggregate, self).__init__(None, None, False)
-
-    def _default_alias(self):
-        if not hasattr(self, 'original_lookup'):
-            raise TypeError("Must supply an alias for complex aggregates")
-        return '%s__%s' % (self.original_lookup, self.name.lower())
-    default_alias = property(_default_alias)
-
-    def get_sql(self, compiler, connection):
-        sql, params = compiler.compile(self.expression)
-        substitutions = {
-            'function': self.sql_function,
-            'field': sql
-        }
-        substitutions.update(self.extra)
-        return self.sql_template % substitutions, params
-
-
-class Avg(Aggregate):
-    is_computed = True
-    sql_function = 'AVG'
-    aggregate_name = 'Avg'
-
-
-class Count(Aggregate):
-    is_ordinal = True
-    sql_function = 'COUNT'
-    aggregate_name = 'Count'
-    sql_template = '%(function)s(%(distinct)s%(field)s)'
-
-    def __init__(self, expression, distinct=False, **extra):
-        self.distinct = distinct
-        super(Count, self).__init__(expression, distinct='DISTINCT ' if distinct else '', **extra)
-
-
-class Max(Aggregate):
-    sql_function = 'MAX'
-    aggregate_name = 'Max'
-
-
-class Min(Aggregate):
-    sql_function = 'MIN'
-    aggregate_name = 'Min'
-
-
-class StdDev(Aggregate):
-    is_computed = True
-    aggregate_name = 'StdDev'
-
-    def __init__(self, expression, sample=False, **extra):
-        super(StdDev, self).__init__(expression, **extra)
-        self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
-
-
-class Sum(Aggregate):
-    sql_function = 'SUM'
-    aggregate_name = 'Sum'
-
-
-class Variance(Aggregate):
-    is_computed = True
-    aggregate_name = 'Variance'
-
-    def __init__(self, expression, sample=False, **extra):
-        super(Variance, self).__init__(expression, **extra)
-        self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
