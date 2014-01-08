@@ -112,7 +112,7 @@ class ExpressionNode(tree.Node):
             expressions.append(sql)
             expression_params.extend(params)
 
-        if self.connector is self.default:
+        if self.connector == self.default:
             return self.get_sql(compiler, connection)
 
         expression_wrapper = '%s'
