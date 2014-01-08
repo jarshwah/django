@@ -161,7 +161,6 @@ class ExpressionNode(tree.Node):
                 for t in targets:
                     source = self.source if self.source is not None else sources[0]
                     self.col = Col(join_list[-1], t, source)
-                    #self.col = (join_list[-1], t.column)
                 if self.source is None:
                     self.source = sources[0]
             except FieldDoesNotExist:
@@ -171,12 +170,16 @@ class ExpressionNode(tree.Node):
 
     def get_cols(self):
         cols = []
+
         for child in self.children:
             cols.extend(child.get_cols())
         if self.wraps_expression:
-            cols.extend(self.expression.get_cols())
+            # Note: we intentionally skip returning wrapped columns! They are not needed
+            pass
         if isinstance(self.col, tuple):
             cols.append(self.col)
+        elif hasattr(self.col, 'get_cols'):
+            cols.extend(self.col.get_cols())
         return cols
 
     def get_sources(self):

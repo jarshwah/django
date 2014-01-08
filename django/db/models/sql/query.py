@@ -988,6 +988,9 @@ class Query(object):
             aggregate.expression.name in self.aggregates):
             # aggregate is over an annotation
             field_name = field_list[0]
+            if not is_summary:
+                raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
+                    aggregate.name, field_name, field_name))
             annotation = self.aggregates[field_name]
             if aggregate.source is None:
                 aggregate.source = annotation.source
@@ -997,9 +1000,6 @@ class Query(object):
                 aggregate.expression.col = (col.alias, field_name)
             else:
                 aggregate.expression.col = (col[0], field_name)
-                if not is_summary:
-                    raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
-                        aggregate.name, field_name, field_name))
         else:
             aggregate.prepare(self)
 
