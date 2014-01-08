@@ -16,7 +16,7 @@ from django.utils.tree import Node
 from django.utils import six
 from django.db import connections, DEFAULT_DB_ALIAS
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode
+from django.db.models.expressions import ExpressionNode, F
 from django.db.models.fields import FieldDoesNotExist
 from django.db.models.lookups import Transform
 from django.db.models.query_utils import Q, refs_aggregate
@@ -1654,7 +1654,12 @@ class Query(object):
             else:
                 assert len(self.select) == 1, \
                     "Cannot add count col with multiple cols in 'select': %r" % self.select
-                count = Count(self.select[0].col[1])
+                col = self.select[0].col
+                if isinstance(col, (tuple, list)):
+                    count = Count(col[1])
+                else:
+                    count = Count(col)
+
         else:
             opts = self.get_meta()
             if not self.select:
@@ -1666,7 +1671,11 @@ class Query(object):
                 # counts need a sub-query -- see get_count() for details.
                 assert len(self.select) == 1, \
                     "Cannot add count col with multiple cols in 'select'."
-                count = Count(self.select[0].col[1], distinct=True)
+                col = self.select[0].col
+                if isinstance(col, (tuple, list)):
+                    count = Count(col[1], distinct=True)
+                else:
+                    count = Count(col, distinct=True)
             # Distinct handling is done in Count(), so don't do it at this
             # level.
             self.distinct = False

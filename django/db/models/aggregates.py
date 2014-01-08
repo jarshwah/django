@@ -3,7 +3,7 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode, F, ValueNode
+from django.db.models.expressions import ExpressionNode, F, ValueNode, ColumnNode
 from django.db.models.fields import IntegerField, FloatField
 
 __all__ = [
@@ -30,8 +30,11 @@ class Aggregate(ExpressionNode):
     def __init__(self, expression, field_type=None, **extra):
         super(Aggregate, self).__init__(None, None, False)
         if not isinstance(expression, ExpressionNode):
-            # handle traditional string fields by wrapping
-            expression = F(expression)
+            if hasattr(expression, 'as_sql'):
+                expression = ColumnNode(expression)
+            else:
+                # handle traditional string fields by wrapping
+                expression = F(expression)
         self.expression = expression
         self.extra = extra
         self.is_summary = False

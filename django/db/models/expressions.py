@@ -298,6 +298,25 @@ class ValueNode(ExpressionNode):
         return '%s' % self.name, []
 
 
+class ColumnNode(ValueNode):
+    """
+    Represents a node that wraps a column object, allowing objects
+    that can act as Expressions to be used fully as one.
+    """
+
+    def __init__(self, column):
+        if not hasattr(column, 'as_sql') or not hasattr(column, 'relabeled_clone'):
+            raise TypeError("'column' must implement as_sql() and relabeled_clone()")
+        super(ColumnNode, self).__init__(column)
+        self.col = column
+
+    def relabeled_clone(self, change_map):
+        return self.name.relabeled_clone(change_map)
+
+    def get_sql(self, compiler, connection):
+        return self.name.as_sql(compiler, connection)
+
+
 class DateModifierNode(ExpressionNode):
     """
     Node that implements the following syntax:
