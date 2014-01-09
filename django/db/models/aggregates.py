@@ -81,8 +81,11 @@ class Aggregate(ExpressionNode):
             #   - .aggregate(Sum('field')+Sum('other'))
             pass
         super(Aggregate, self).prepare(query, allow_joins, reuse)
+        self._resolve_source()
+
+
+    def _resolve_source(self):
         if self.source is None:
-            # try to resolve it
             sources = self.get_sources()
             num_sources = len(sources)
             if num_sources == 0:

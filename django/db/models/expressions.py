@@ -216,7 +216,7 @@ class ExpressionNode(tree.Node):
             if child.field is not None:
                 print 'returning :: ', child.field
                 return child.field
-        return None
+        return self.source
 
     @property
     def output_type(self):
