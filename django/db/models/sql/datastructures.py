@@ -3,6 +3,8 @@ Useful auxilliary data structures for query construction. Not useful outside
 the SQL domain.
 """
 
+from django.db.models import fields
+
 
 class Col(object):
     def __init__(self, alias, target, source):
@@ -55,6 +57,7 @@ class Date(object):
     def __init__(self, col, lookup_type):
         self.col = col
         self.lookup_type = lookup_type
+        self.source = fields.DateField()
 
     def relabeled_clone(self, change_map):
         return self.__class__((change_map.get(self.col[0], self.col[0]), self.col[1]))
@@ -75,6 +78,7 @@ class DateTime(object):
         self.col = col
         self.lookup_type = lookup_type
         self.tzname = tzname
+        self.source = fields.DateTimeField()
 
     def relabeled_clone(self, change_map):
         return self.__class__((change_map.get(self.col[0], self.col[0]), self.col[1]))

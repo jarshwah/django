@@ -19,8 +19,7 @@ from django.db.backends.sqlite3.client import DatabaseClient
 from django.db.backends.sqlite3.creation import DatabaseCreation
 from django.db.backends.sqlite3.introspection import DatabaseIntrospection
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor
-from django.db.models import fields
-from django.db.models.sql import aggregates
+from django.db.models import fields, aggregates
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.encoding import force_text
 from django.utils.functional import cached_property

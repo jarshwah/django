@@ -38,20 +38,14 @@ class Aggregate(ExpressionNode):
         self.expression = expression
         self.extra = extra
         self.is_summary = False
+        self.source = field_type
 
         if expression.is_aggregate:
             raise FieldError("Aggregates %s(%s(..)) cannot be nested" %
                 (self.name, expression.name))
 
-        if self.is_ordinal:
-            self.source = ordinal_aggregate_field
-        elif self.is_computed:
-            self.source = computed_aggregate_field
-        else:
-            self.source = field_type
-
-    @property
-    def output_type(self):
+    def prepare(self, query=None, allow_joins=True, reuse=None):
+        super(Aggregate, self).prepare(query, allow_joins, reuse)
         if self.source is None:
             # try to resolve it
             sources = self.get_sources()
@@ -67,7 +61,15 @@ class Aggregate(ExpressionNode):
                     if not isinstance(self.source, source.__class__):
                         raise FieldError("Complex aggregate contains mixed types. You \
                             must set field_type")
-        return self.source
+
+    @property
+    def output_type(self):
+        if self.is_ordinal:
+            return ordinal_aggregate_field
+        elif self.is_computed:
+            return computed_aggregate_field
+        else:
+            return self.source
 
     @property
     def field(self):
@@ -111,6 +113,7 @@ class Count(Aggregate):
     def __init__(self, expression, distinct=False, **extra):
         if expression == '*':
             expression = ValueNode(expression)
+            expression.source = ordinal_aggregate_field
         super(Count, self).__init__(expression, distinct='DISTINCT ' if distinct else '', **extra)
 
 

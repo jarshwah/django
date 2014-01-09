@@ -309,6 +309,8 @@ class ColumnNode(ValueNode):
             raise TypeError("'column' must implement as_sql() and relabeled_clone()")
         super(ColumnNode, self).__init__(column)
         self.col = column
+        if hasattr(column, 'source'):
+            self.source = column.source
 
     def relabeled_clone(self, change_map):
         return self.name.relabeled_clone(change_map)
