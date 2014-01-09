@@ -774,8 +774,6 @@ class QuerySet(object):
         with extra data derived or aggregated from other fields.
         """
         for arg in args:
-            if not arg.is_aggregate:
-                raise TypeError("Non-aggregate annotations require an alias")
             if arg.default_alias in kwargs:
                 raise ValueError("The named annotation '%s' conflicts with the "
                                  "default name for another annotation."

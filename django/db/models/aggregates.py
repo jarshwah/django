@@ -3,16 +3,18 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode, F, ValueNode, ColumnNode
+from django.db.models.expressions import (
+    ExpressionNode,
+    F,
+    ValueNode,
+    ColumnNode,
+    ordinal_aggregate_field,
+    computed_aggregate_field)
 from django.db.models.fields import IntegerField, FloatField
 
 __all__ = [
     'Aggregate', 'Avg', 'Count', 'Max', 'Min', 'StdDev', 'Sum', 'Variance',
 ]
-
-
-ordinal_aggregate_field = IntegerField()
-computed_aggregate_field = FloatField()
 
 
 class Aggregate(ExpressionNode):
@@ -21,8 +23,6 @@ class Aggregate(ExpressionNode):
 
     is_aggregate = True
     wraps_expression = True
-    is_ordinal = False
-    is_computed = False
     sql_template = '%(function)s(%(field)s)'
     sql_function = None
     name = None
@@ -45,6 +45,41 @@ class Aggregate(ExpressionNode):
                 (self.name, expression.name))
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
+
+        if self.expression.validate_name: # simple lookup
+            name = self.expression.name
+            field_list = name.split(LOOKUP_SEP)
+            # this whole block was moved from sql/query.py to encapsulate, but will that
+            # possibly break custom query classes? The derived prepare() saves us a lot
+            # of extra boilerplate though
+            if len(field_list) == 1 and name in query.aggregates:
+                if not self.is_summary:
+                    raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
+                        self.name, name, name))
+                # aggregation is over an annotation
+                annotation = query.aggregates[name]
+                if not hasattr(annotation, 'expression'):
+                    # trying to aggregate over a complex annotation.. how?!
+                    # somehow need to build the column, from the annotation,
+                    # without including the annotation function
+                    raise FieldError("Cannot compute an aggregation over a complex annotation")
+                    # investigate how to fix this
+                else:
+                    if self.source is None:
+                        self.source = annotation.source
+                    col = annotation.expression.col
+                    # use the annotation alias otherwise we rebuild the full node inside the aggregation
+                    # this is too hacky - solve this, and we can solve the above fielderror
+                    if hasattr(col, 'as_sql'):
+                        self.expression.col = (col.alias, name)
+                    else:
+                        self.expression.col = (col[0], name)
+                    return
+        elif self.is_summary:
+            # complex aggregation, check all parts:
+            #   - .aggregate(Sum(F('field')+F('other')))
+            #   - .aggregate(Sum('field')+Sum('other'))
+            pass
         super(Aggregate, self).prepare(query, allow_joins, reuse)
         if self.source is None:
             # try to resolve it
@@ -62,23 +97,6 @@ class Aggregate(ExpressionNode):
                         raise FieldError("Complex aggregate contains mixed types. You \
                             must set field_type")
 
-    @property
-    def output_type(self):
-        if self.is_ordinal:
-            return ordinal_aggregate_field
-        elif self.is_computed:
-            return computed_aggregate_field
-        else:
-            return self.source
-
-    @property
-    def field(self):
-        return self.output_type
-
-    def _default_alias(self):
-        return '%s__%s' % (self.expression.name, self.name.lower())
-    default_alias = property(_default_alias)
-
     def get_sql(self, compiler, connection):
         sql, params = compiler.compile(self.expression)
         substitutions = {
@@ -87,15 +105,6 @@ class Aggregate(ExpressionNode):
         }
         substitutions.update(self.extra)
         return self.sql_template % substitutions, params
-
-    def get_lookup(self, lookup):
-        return self.output_type.get_lookup(lookup)
-
-    def __bool__(self):
-        """
-        For truth value testing.
-        """
-        return True
 
 
 class Avg(Aggregate):

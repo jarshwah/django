@@ -9,6 +9,9 @@ from django.db.models.sql.datastructures import Col
 from django.utils import tree
 
 
+ordinal_aggregate_field = IntegerField()
+computed_aggregate_field = FloatField()
+
 class ExpressionNode(tree.Node):
     """
     Base class for all query expressions.
@@ -37,7 +40,10 @@ class ExpressionNode(tree.Node):
     validate_name = False
     wraps_expression = False
 
+    # aggregate specific fields
     is_aggregate = False
+    is_ordinal = False
+    is_computed = False
 
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
@@ -45,7 +51,6 @@ class ExpressionNode(tree.Node):
         super(ExpressionNode, self).__init__(children, connector, negated)
         self.col = None
         self.source = None
-
 
     def _combine(self, other, connector, reversed, node=None):
         if isinstance(other, datetime.timedelta):
@@ -61,20 +66,21 @@ class ExpressionNode(tree.Node):
         else:
             obj = node or ExpressionNode([self], connector)
             obj.add(other, connector)
+        obj.is_aggregate = any(c.is_aggregate for c in obj.children)
         return obj
 
     def contains_aggregate(self, existing_aggregates):
-        if self.children:
-            return any(child.contains_aggregate(existing_aggregates)
-                       for child in self.children
-                       if hasattr(child, 'contains_aggregate'))
+        for child in self.children:
+            agg, lookup = child.contains_aggregate(existing_aggregates)
+            if agg:
+                return agg, lookup
+
+        if self.wraps_expression:
+            return self.expression.contains_aggregate(existing_aggregates)
 
         if self.validate_name:
             return refs_aggregate(self.name.split(LOOKUP_SEP),
                                   existing_aggregates)
-
-        if self.wraps_expression:
-            return self.expression.contains_aggregate(existing_aggregates)
 
         return False, ()
 
@@ -149,6 +155,7 @@ class ExpressionNode(tree.Node):
         field_list = self.name.split(LOOKUP_SEP)
         if self.name in query.aggregates:
             self.col = query.aggregate_select[self.name]
+            # TODO (Josh) is this where we should solve the agg over an annotation?
         else:
             try:
                 field, sources, opts, join_list, path = query.setup_joins(
@@ -192,6 +199,42 @@ class ExpressionNode(tree.Node):
 
     def get_sql(self, compiler, connection):
         return '', []
+
+    def __bool__(self):
+        """
+        For truth value testing.
+        """
+        return True
+
+    ###############
+    # AGGREGATION #
+    ###############
+
+    @property
+    def field(self):
+        for child in self.children:
+            if child.field is not None:
+                print 'returning :: ', child.field
+                return child.field
+        return None
+
+    @property
+    def output_type(self):
+        if self.is_ordinal:
+            return ordinal_aggregate_field
+        elif self.is_computed:
+            return computed_aggregate_field
+        else:
+            return self.source
+
+    def get_lookup(self, lookup):
+        return self.output_type.get_lookup(lookup)
+
+    def _default_alias(self):
+        if not hasattr(self.expression, 'name'):
+            raise TypeError("Non-aggregate annotations require an alias")
+        return '%s__%s' % (self.expression.name, self.name.lower())
+    default_alias = property(_default_alias)
 
     #############
     # OPERATORS #

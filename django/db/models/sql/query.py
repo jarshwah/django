@@ -983,26 +983,7 @@ class Query(object):
         Adds a single aggregate expression to the Query
         """
         aggregate.is_summary = is_summary
-        field_list = aggregate.expression.name.split(LOOKUP_SEP)
-        if len(field_list) == 1 and self._aggregates and (
-            aggregate.expression.name in self.aggregates):
-            # aggregate is over an annotation
-            field_name = field_list[0]
-            if not is_summary:
-                raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
-                    aggregate.name, field_name, field_name))
-            annotation = self.aggregates[field_name]
-            if aggregate.source is None:
-                aggregate.source = annotation.source
-            col = annotation.expression.col
-            # use the annotation alias otherwise we rebuild the full node inside the aggregation
-            if hasattr(col, 'as_sql'):
-                aggregate.expression.col = (col.alias, field_name)
-            else:
-                aggregate.expression.col = (col[0], field_name)
-        else:
-            aggregate.prepare(self)
-
+        aggregate.prepare(self)
         self.append_aggregate_mask([alias])
         self.aggregates[alias] = aggregate
 
