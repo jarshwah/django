@@ -66,7 +66,10 @@ class ExpressionNode(tree.Node):
         else:
             obj = node or ExpressionNode([self], connector)
             obj.add(other, connector)
+
+        # having a child aggregate (or computed aggregate) infects the entire tree
         obj.is_aggregate = any(c.is_aggregate for c in obj.children)
+        obj.is_computed = any(c.is_computed for c in obj.children)
         return obj
 
     def contains_aggregate(self, existing_aggregates):
@@ -212,6 +215,7 @@ class ExpressionNode(tree.Node):
 
     @property
     def field(self):
+        self._resolve_source()
         for child in self.children:
             if child.field is not None:
                 return child.field
@@ -224,16 +228,34 @@ class ExpressionNode(tree.Node):
         elif self.is_computed:
             return computed_aggregate_field
         else:
+            self._resolve_source()
             return self.source
 
     def get_lookup(self, lookup):
         return self.output_type.get_lookup(lookup)
 
     def _default_alias(self):
-        if not hasattr(self.expression, 'name'):
+        if not self.wraps_expression or (
+            self.wraps_expression and not hasattr(self.expression, 'name')):
             raise TypeError("Non-aggregate annotations require an alias")
         return '%s__%s' % (self.expression.name, self.name.lower())
     default_alias = property(_default_alias)
+
+    def _resolve_source(self):
+        if self.source is None:
+            sources = self.get_sources()
+            num_sources = len(sources)
+            if num_sources == 0:
+                raise FieldError("Cannot resolve aggregate type, unknown field_type")
+            elif num_sources == 1:
+                self.source = sources[0]
+            else:
+                # this could be smarter by allowing certain combinations
+                self.source = sources[0]
+                for source in sources:
+                    if not isinstance(self.source, source.__class__):
+                        raise FieldError(
+                            "Complex aggregate contains mixed types. You must set field_type")
 
     #############
     # OPERATORS #

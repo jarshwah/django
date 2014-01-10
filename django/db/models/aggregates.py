@@ -83,23 +83,6 @@ class Aggregate(ExpressionNode):
         super(Aggregate, self).prepare(query, allow_joins, reuse)
         self._resolve_source()
 
-
-    def _resolve_source(self):
-        if self.source is None:
-            sources = self.get_sources()
-            num_sources = len(sources)
-            if num_sources == 0:
-                raise FieldError("Cannot resolve aggregate type, unknown field_type")
-            elif num_sources == 1:
-                self.source = sources[0]
-            else:
-                # this could be smarter by allowing certain combinations
-                self.source = sources[0]
-                for source in sources:
-                    if not isinstance(self.source, source.__class__):
-                        raise FieldError("Complex aggregate contains mixed types. You \
-                            must set field_type")
-
     def get_sql(self, compiler, connection):
         sql, params = compiler.compile(self.expression)
         substitutions = {

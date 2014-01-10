@@ -672,6 +672,7 @@ class ComplexAggregateTestCase(TestCase):
         with self.assertRaises(FieldError):
             Book.objects.annotate(val=Max(ValueNode(2)))[0]
 
+
     def test_annotation_expressions(self):
         authors = Author.objects.annotate(combined_ages=Sum(F('age')+F('friends__age'))).order_by('name')
         authors2 = Author.objects.annotate(combined_ages=Sum('age')+Sum('friends__age')).order_by('name')
@@ -691,6 +692,43 @@ class ComplexAggregateTestCase(TestCase):
                 ],
                 lambda a: (a.name, a.combined_ages)
             )
+
+    def test_aggregation_expressions(self):
+        a1 = Author.objects.aggregate(av_age=Sum('age') / Count('*'))
+        a2 = Author.objects.aggregate(av_age=Sum('age') / Count('age'))
+        a3 = Author.objects.aggregate(av_age=Avg('age'))
+        self.assertEqual(a1, {'av_age': 37})
+        self.assertEqual(a2, {'av_age': 37})
+        self.assertEqual(a3, {'av_age': Approximate(37.4, places=1)})
+
+    def test_order_of_precedence(self):
+        p1 = Book.objects.filter(rating=4).aggregate(avg_price=(Avg('price')+2)*3)
+        self.assertEqual(p1, {'avg_price': Approximate(148.18, places=2)})
+
+        p2 = Book.objects.filter(rating=4).aggregate(avg_price=Avg('price')+2*3)
+        self.assertEqual(p2, {'avg_price': Approximate(53.39, places=2)})
+
+    def test_combine_different_types(self):
+        with self.assertRaises(FieldError):
+            Book.objects.annotate(sums=Sum('rating')+Sum('pages')+Sum('price')).get(pk=4)
+
+        b1 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+            field_type=IntegerField())).get(pk=4)
+        self.assertEqual(b1.sums, 383)
+
+        b2 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+            field_type=FloatField())).get(pk=4)
+        self.assertEqual(b2.sums, 383.69)
+
+        b3 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+            field_type=DecimalField())).get(pk=4)
+        self.assertEqual(b3.sums, 383.69)
+
+    def test_complex_aggregations_require_kwarg(self):
+        with self.assertRaises(TypeError):
+            Author.objects.annotate(Sum(F('age') + F('friends__age')))
+        with self.assertRaises(TypeError):
+            Author.objects.aggregate(Sum('age') / Count('age'))
 
     def test_add_implementation(self):
         pass
