@@ -214,7 +214,6 @@ class ExpressionNode(tree.Node):
     def field(self):
         for child in self.children:
             if child.field is not None:
-                print 'returning :: ', child.field
                 return child.field
         return self.source
 
@@ -333,9 +332,12 @@ class ValueNode(ExpressionNode):
     to act as nodes
     """
 
-    def __init__(self, name):
+    # Josh (TODO): is "ValueNode" really the best name for what is simply
+    # a raw sql value?
+    def __init__(self, name, field_type=None):
         super(ValueNode, self).__init__(None, None, False)
         self.name = name
+        self.source = field_type
 
     def get_sql(self, compiler, connection):
         return '%s' % self.name, []

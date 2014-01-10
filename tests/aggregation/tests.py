@@ -4,8 +4,12 @@ import datetime
 from decimal import Decimal
 import re
 
+from django.core.exceptions import FieldError
 from django.db import connection
-from django.db.models import Avg, Sum, Count, Max, Min
+from django.db.models import (
+    Avg, Sum, Count, Max, Min,
+    F, ValueNode,
+    IntegerField, FloatField, DecimalField)
 from django.test import TestCase
 from django.test.utils import Approximate
 from django.test.utils import CaptureQueriesContext
@@ -653,3 +657,47 @@ class BaseAggregateTestCase(TestCase):
             else:
                 self.assertNotIn('order by', qstr)
             self.assertEqual(qstr.count(' join '), 0)
+
+
+class ComplexAggregateTestCase(TestCase):
+    fixtures = ["aggregation.json"]
+
+    def test_nonfield_annotation(self):
+        book = Book.objects.annotate(val=Max(ValueNode(2, field_type=IntegerField())))[0]
+        self.assertEqual(book.val, 2)
+        book = Book.objects.annotate(val=Max(ValueNode(2), field_type=IntegerField()))[0]
+        self.assertEqual(book.val, 2)
+
+    def test_missing_field_type_raises_error(self):
+        with self.assertRaises(FieldError):
+            Book.objects.annotate(val=Max(ValueNode(2)))[0]
+
+    def test_annotation_expressions(self):
+        authors = Author.objects.annotate(combined_ages=Sum(F('age')+F('friends__age'))).order_by('name')
+        authors2 = Author.objects.annotate(combined_ages=Sum('age')+Sum('friends__age')).order_by('name')
+        for qs in (authors, authors2):
+            self.assertEqual(len(qs), 9)
+            self.assertQuerysetEqual(
+                qs, [
+                    ('Adrian Holovaty', 132),
+                    ('Brad Dayley', None),
+                    ('Jacob Kaplan-Moss', 129),
+                    ('James Bennett', 63),
+                    ('Jeffrey Forcier', 128),
+                    ('Paul Bissex', 120),
+                    ('Peter Norvig', 103),
+                    ('Stuart Russell', 103),
+                    ('Wesley J. Chun', 176)
+                ],
+                lambda a: (a.name, a.combined_ages)
+            )
+
+    def test_add_implementation(self):
+        pass
+
+    def test_aggregate_over_complex_annotation(self):
+        # this is currently a limitation and isn't yet working
+        age = Author.objects.annotate(
+            combined_ages=Sum(F('age')+F('friends__age'))
+            ).aggregate(max_combined_age=Max('combined_ages'))
+        self.assertEqual(age['max_combined_age'], 176)
