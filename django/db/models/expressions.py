@@ -44,6 +44,7 @@ class ExpressionNode(tree.Node):
     is_aggregate = False
     is_ordinal = False
     is_computed = False
+    is_summary = False
 
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
@@ -142,9 +143,11 @@ class ExpressionNode(tree.Node):
 
         for child in self.children:
             if hasattr(child, 'prepare'):
+                child.is_summary = self.is_summary
                 child.prepare(query, allow_joins, reuse)
 
         if self.wraps_expression:
+            self.expression.is_summary = self.is_summary
             self.expression.prepare(query, allow_joins, reuse)
 
         if self.validate_name:
@@ -158,7 +161,6 @@ class ExpressionNode(tree.Node):
         field_list = self.name.split(LOOKUP_SEP)
         if self.name in query.aggregates:
             self.col = query.aggregate_select[self.name]
-            # TODO (Josh) is this where we should solve the agg over an annotation?
         else:
             try:
                 field, sources, opts, join_list, path = query.setup_joins(
@@ -237,7 +239,7 @@ class ExpressionNode(tree.Node):
     def _default_alias(self):
         if not self.wraps_expression or (
             self.wraps_expression and not hasattr(self.expression, 'name')):
-            raise TypeError("Non-aggregate annotations require an alias")
+            raise TypeError("Complex expressions require an alias")
         return '%s__%s' % (self.expression.name, self.name.lower())
     default_alias = property(_default_alias)
 

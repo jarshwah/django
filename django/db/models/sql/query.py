@@ -357,6 +357,7 @@ class Query(object):
             obj.related_select_cols = []
 
             relabels = dict((t, 'subquery') for t in self.tables)
+            relabels[None] = 'subquery'
             # Remove any aggregates marked for reduction from the subquery
             # and move them to the outer AggregateQuery.
             for alias, aggregate in self.aggregate_select.items():

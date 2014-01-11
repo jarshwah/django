@@ -37,7 +37,6 @@ class Aggregate(ExpressionNode):
                 expression = F(expression)
         self.expression = expression
         self.extra = extra
-        self.is_summary = False
         self.source = field_type
 
         if expression.is_aggregate:
@@ -45,7 +44,6 @@ class Aggregate(ExpressionNode):
                 (self.name, expression.name))
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
-
         if self.expression.validate_name: # simple lookup
             name = self.expression.name
             field_list = name.split(LOOKUP_SEP)
@@ -57,29 +55,13 @@ class Aggregate(ExpressionNode):
                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
                         self.name, name, name))
                 # aggregation is over an annotation
+                # manually set the column, and don't prepare the expression
+                # otherwise the full annotation, including the agg function,
+                # is built inside this aggregation.
                 annotation = query.aggregates[name]
-                if not hasattr(annotation, 'expression'):
-                    # trying to aggregate over a complex annotation.. how?!
-                    # somehow need to build the column, from the annotation,
-                    # without including the annotation function
-                    raise FieldError("Cannot compute an aggregation over a complex annotation")
-                    # investigate how to fix this
-                else:
-                    if self.source is None:
-                        self.source = annotation.source
-                    col = annotation.expression.col
-                    # use the annotation alias otherwise we rebuild the full node inside the aggregation
-                    # this is too hacky - solve this, and we can solve the above fielderror
-                    if hasattr(col, 'as_sql'):
-                        self.expression.col = (col.alias, name)
-                    else:
-                        self.expression.col = (col[0], name)
-                    return
-        elif self.is_summary:
-            # complex aggregation, check all parts:
-            #   - .aggregate(Sum(F('field')+F('other')))
-            #   - .aggregate(Sum('field')+Sum('other'))
-            pass
+                self.expression.col = (None, name)
+                self.source = annotation.source
+                return
         super(Aggregate, self).prepare(query, allow_joins, reuse)
         self._resolve_source()
 
