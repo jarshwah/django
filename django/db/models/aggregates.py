@@ -3,24 +3,17 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import (
-    ExpressionNode,
-    F,
-    ValueNode,
-    ColumnNode,
-    ordinal_aggregate_field,
-    computed_aggregate_field)
+from django.db.models.expressions import ExpressionNode, F, ValueNode, ColumnNode
 from django.db.models.fields import IntegerField, FloatField
 
 __all__ = [
     'Aggregate', 'Avg', 'Count', 'Max', 'Min', 'StdDev', 'Sum', 'Variance',
 ]
 
+integer_field = IntegerField()
+float_field = FloatField()
 
 class Aggregate(ExpressionNode):
-    # what needs doing?
-    #   - potentially modify compiler.py to use different value types
-
     is_aggregate = True
     wraps_expression = True
     sql_template = '%(function)s(%(field)s)'
@@ -38,9 +31,14 @@ class Aggregate(ExpressionNode):
         self.expression = expression
         self.extra = extra
         self.source = field_type
+        if self.source is None:
+            if self.is_ordinal:
+                self.source = integer_field
+            elif self.is_computed:
+                self.source = float_field
 
         if expression.is_aggregate:
-            raise FieldError("Aggregates %s(%s(..)) cannot be nested" %
+            raise FieldError("Cannot compute %s(%s(..)): aggregates cannot be nested" %
                 (self.name, expression.name))
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
@@ -54,14 +52,17 @@ class Aggregate(ExpressionNode):
                 if not self.is_summary:
                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
                         self.name, name, name))
-                # aggregation is over an annotation
-                # manually set the column, and don't prepare the expression
-                # otherwise the full annotation, including the agg function,
-                # is built inside this aggregation.
+
                 annotation = query.aggregates[name]
-                self.expression.col = (None, name)
-                self.source = annotation.source
-                return
+                if self.source is None:
+                    self.source = annotation.output_type
+                if annotation.is_aggregate:
+                    # aggregation is over an aggregated annotation:
+                    # manually set the column, and don't prepare the expression
+                    # otherwise the full annotation, including the agg function,
+                    # is built inside this aggregation.
+                    self.expression.col = (None, name)
+                    return
         super(Aggregate, self).prepare(query, allow_joins, reuse)
         self._resolve_source()
 
@@ -90,7 +91,7 @@ class Count(Aggregate):
     def __init__(self, expression, distinct=False, **extra):
         if expression == '*':
             expression = ValueNode(expression)
-            expression.source = ordinal_aggregate_field
+            expression.source = integer_field
         super(Count, self).__init__(expression, distinct='DISTINCT ' if distinct else '', **extra)
 
 

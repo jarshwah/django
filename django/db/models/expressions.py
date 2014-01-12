@@ -9,16 +9,10 @@ from django.db.models.sql.datastructures import Col
 from django.utils import tree
 
 
-ordinal_aggregate_field = IntegerField()
-computed_aggregate_field = FloatField()
-
 class ExpressionNode(tree.Node):
     """
     Base class for all query expressions.
     """
-
-    # TODO (Josh): allow @add_implementation to change how as_sql generates
-    # its output
 
     # Arithmetic connectors
     ADD = '+'
@@ -68,9 +62,8 @@ class ExpressionNode(tree.Node):
             obj = node or ExpressionNode([self], connector)
             obj.add(other, connector)
 
-        # having a child aggregate (or computed aggregate) infects the entire tree
+        # having a child aggregate infects the entire tree
         obj.is_aggregate = any(c.is_aggregate for c in obj.children)
-        obj.is_computed = any(c.is_computed for c in obj.children)
         return obj
 
     def contains_aggregate(self, existing_aggregates):
@@ -198,7 +191,7 @@ class ExpressionNode(tree.Node):
         sources = [self.source] if self.source is not None else []
         for child in self.children:
             sources.extend(child.get_sources())
-        if self.wraps_expression:
+        if self.wraps_expression and self.source is None:
             sources.extend(self.expression.get_sources())
         return sources
 
@@ -225,13 +218,8 @@ class ExpressionNode(tree.Node):
 
     @property
     def output_type(self):
-        if self.is_ordinal:
-            return ordinal_aggregate_field
-        elif self.is_computed:
-            return computed_aggregate_field
-        else:
-            self._resolve_source()
-            return self.source
+        self._resolve_source()
+        return self.source
 
     def get_lookup(self, lookup):
         return self.output_type.get_lookup(lookup)
