@@ -3,7 +3,7 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode, F, ValueNode, ColumnNode
+from django.db.models.expressions import ExpressionNode, WrappedExpression, F, ValueNode
 from django.db.models.fields import IntegerField, FloatField
 
 __all__ = [
@@ -13,33 +13,21 @@ __all__ = [
 integer_field = IntegerField()
 float_field = FloatField()
 
-class Aggregate(ExpressionNode):
+class Aggregate(WrappedExpression):
     is_aggregate = True
-    wraps_expression = True
-    sql_template = '%(function)s(%(field)s)'
-    sql_function = None
     name = None
 
-    def __init__(self, expression, field_type=None, **extra):
-        super(Aggregate, self).__init__(None, None, False)
-        if not isinstance(expression, ExpressionNode):
-            if hasattr(expression, 'as_sql'):
-                expression = ColumnNode(expression)
-            else:
-                # handle traditional string fields by wrapping
-                expression = F(expression)
-        self.expression = expression
-        self.extra = extra
-        self.source = field_type
+    def __init__(self, expression, output_type=None, **extra):
+        super(Aggregate, self).__init__(expression, output_type, **extra)
+        if self.expression.is_aggregate:
+            raise FieldError("Cannot compute %s(%s(..)): aggregates cannot be nested" %
+                (self.name, expression.name))
+
         if self.source is None:
             if self.is_ordinal:
                 self.source = integer_field
             elif self.is_computed:
                 self.source = float_field
-
-        if expression.is_aggregate:
-            raise FieldError("Cannot compute %s(%s(..)): aggregates cannot be nested" %
-                (self.name, expression.name))
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
         if self.expression.validate_name: # simple lookup
@@ -66,14 +54,12 @@ class Aggregate(ExpressionNode):
         super(Aggregate, self).prepare(query, allow_joins, reuse)
         self._resolve_source()
 
-    def get_sql(self, compiler, connection):
-        sql, params = compiler.compile(self.expression)
-        substitutions = {
-            'function': self.sql_function,
-            'field': sql
-        }
-        substitutions.update(self.extra)
-        return self.sql_template % substitutions, params
+    def _default_alias(self):
+        if hasattr(self.expression, 'name') and self.expression.validate_name:
+            return '%s__%s' % (self.expression.name, self.name.lower())
+        raise TypeError("Complex expressions require an alias")
+
+    default_alias = property(_default_alias)
 
 
 class Avg(Aggregate):

@@ -663,12 +663,12 @@ class ComplexAggregateTestCase(TestCase):
     fixtures = ["aggregation.json"]
 
     def test_nonfield_annotation(self):
-        book = Book.objects.annotate(val=Max(ValueNode(2, field_type=IntegerField())))[0]
+        book = Book.objects.annotate(val=Max(ValueNode(2, output_type=IntegerField())))[0]
         self.assertEqual(book.val, 2)
-        book = Book.objects.annotate(val=Max(ValueNode(2), field_type=IntegerField()))[0]
+        book = Book.objects.annotate(val=Max(ValueNode(2), output_type=IntegerField()))[0]
         self.assertEqual(book.val, 2)
 
-    def test_missing_field_type_raises_error(self):
+    def test_missing_output_type_raises_error(self):
         with self.assertRaises(FieldError):
             Book.objects.annotate(val=Max(ValueNode(2)))[0]
 
@@ -713,15 +713,15 @@ class ComplexAggregateTestCase(TestCase):
             Book.objects.annotate(sums=Sum('rating')+Sum('pages')+Sum('price')).get(pk=4)
 
         b1 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            field_type=IntegerField())).get(pk=4)
+            output_type=IntegerField())).get(pk=4)
         self.assertEqual(b1.sums, 383)
 
         b2 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            field_type=FloatField())).get(pk=4)
+            output_type=FloatField())).get(pk=4)
         self.assertEqual(b2.sums, 383.69)
 
         b3 = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            field_type=DecimalField(decimal_places=2))).get(pk=4)
+            output_type=DecimalField(decimal_places=2))).get(pk=4)
         self.assertEqual(b3.sums, Decimal("383.69"))
 
     def test_complex_aggregations_require_kwarg(self):

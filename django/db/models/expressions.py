@@ -6,6 +6,7 @@ from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields import FieldDoesNotExist, IntegerField, FloatField
 from django.db.models.query_utils import refs_aggregate
 from django.db.models.sql.datastructures import Col
+from django.utils.functional import cached_property
 from django.utils import tree
 
 
@@ -30,15 +31,14 @@ class ExpressionNode(tree.Node):
     BITAND = '&'
     BITOR = '|'
 
-    # hooks for adding functionality
     validate_name = False
-    wraps_expression = False
 
     # aggregate specific fields
     is_aggregate = False
+    is_summary = False
+    # sql/query.resolve_aggregate uses below to coerce
     is_ordinal = False
     is_computed = False
-    is_summary = False
 
     def __init__(self, children=None, connector=None, negated=False):
         if children is not None and len(children) > 1 and connector is None:
@@ -66,47 +66,6 @@ class ExpressionNode(tree.Node):
         obj.is_aggregate = any(c.is_aggregate for c in obj.children)
         return obj
 
-    def contains_aggregate(self, existing_aggregates):
-        for child in self.children:
-            agg, lookup = child.contains_aggregate(existing_aggregates)
-            if agg:
-                return agg, lookup
-
-        if self.wraps_expression:
-            return self.expression.contains_aggregate(existing_aggregates)
-
-        if self.validate_name:
-            return refs_aggregate(self.name.split(LOOKUP_SEP),
-                                  existing_aggregates)
-
-        return False, ()
-
-    def prepare_database_save(self, unused):
-        return self
-
-    #############
-    # EVALUATOR #
-    #############
-
-    def relabeled_clone(self, change_map):
-        clone = copy.copy(self)
-        if hasattr(clone.col, 'relabeled_clone'):
-            clone.col = clone.col.relabeled_clone(change_map)
-        elif clone.col:
-            clone.col = (change_map.get(clone.col[0], clone.col[0]), clone.col[1])
-
-        # rebuild the clones children with new relabeled clones..
-        new_children = [
-            child.relabeled_clone(change_map) if hasattr(child, 'relabeled_clone')
-            else child
-            for child in clone.children]
-        clone.children = new_children
-
-        if self.wraps_expression:
-            clone.expression = clone.expression.relabeled_clone(change_map)
-
-        return clone
-
     def as_sql(self, compiler, connection):
         expressions = []
         expression_params = []
@@ -114,9 +73,6 @@ class ExpressionNode(tree.Node):
             sql, params = compiler.compile(child)
             expressions.append(sql)
             expression_params.extend(params)
-
-        if self.connector == self.default:
-            return self.get_sql(compiler, connection)
 
         expression_wrapper = '%s'
         if len(self.children) > 1:
@@ -126,97 +82,18 @@ class ExpressionNode(tree.Node):
         sql = connection.ops.combine_expression(self.connector, expressions)
         return expression_wrapper % sql, expression_params
 
-    def evaluate(self, compiler, connection):
-        # this method is here for compatability purposes
-        return self.as_sql(compiler, connection)
-
     def prepare(self, query=None, allow_joins=True, reuse=None):
-        if not allow_joins and self.validate_name and LOOKUP_SEP in self.name:
-            raise FieldError("Joined field references are not permitted in this query")
-
         for child in self.children:
             if hasattr(child, 'prepare'):
                 child.is_summary = self.is_summary
                 child.prepare(query, allow_joins, reuse)
-
-        if self.wraps_expression:
-            self.expression.is_summary = self.is_summary
-            self.expression.prepare(query, allow_joins, reuse)
-
-        if self.validate_name:
-            self.setup_cols(query, reuse)
-
         return self
-
-    def setup_cols(self, query, reuse):
-        if query is None:
-            return
-        field_list = self.name.split(LOOKUP_SEP)
-        if self.name in query.aggregates:
-            self.col = query.aggregate_select[self.name]
-        else:
-            try:
-                field, sources, opts, join_list, path = query.setup_joins(
-                    field_list, query.get_meta(),
-                    query.get_initial_alias(), reuse)
-                self._used_joins = join_list
-                targets, _, join_list = query.trim_joins(sources, join_list, path)
-                if reuse is not None:
-                    reuse.update(join_list)
-                for t in targets:
-                    source = self.source if self.source is not None else sources[0]
-                    self.col = Col(join_list[-1], t, source)
-                if self.source is None:
-                    self.source = sources[0]
-            except FieldDoesNotExist:
-                raise FieldError("Cannot resolve keyword %r into field. "
-                                 "Choices are: %s" % (self.name,
-                                                      [f.name for f in self.opts.fields]))
-
-    def get_cols(self):
-        cols = []
-
-        for child in self.children:
-            cols.extend(child.get_cols())
-        if self.wraps_expression:
-            # Note: we intentionally skip returning wrapped columns! They are not needed
-            pass
-        if isinstance(self.col, tuple):
-            cols.append(self.col)
-        elif hasattr(self.col, 'get_cols'):
-            cols.extend(self.col.get_cols())
-        return cols
-
-    def get_sources(self):
-        sources = [self.source] if self.source is not None else []
-        for child in self.children:
-            sources.extend(child.get_sources())
-        if self.wraps_expression and self.source is None:
-            sources.extend(self.expression.get_sources())
-        return sources
-
-    def get_sql(self, compiler, connection):
-        return '', []
-
-    def __bool__(self):
-        """
-        For truth value testing.
-        """
-        return True
-
-    ###############
-    # AGGREGATION #
-    ###############
 
     @property
     def field(self):
-        self._resolve_source()
-        for child in self.children:
-            if child.field is not None:
-                return child.field
-        return self.source
+        return self.output_type
 
-    @property
+    @cached_property
     def output_type(self):
         self._resolve_source()
         return self.source
@@ -224,19 +101,48 @@ class ExpressionNode(tree.Node):
     def get_lookup(self, lookup):
         return self.output_type.get_lookup(lookup)
 
-    def _default_alias(self):
-        if not self.wraps_expression or (
-            self.wraps_expression and not hasattr(self.expression, 'name')):
-            raise TypeError("Complex expressions require an alias")
-        return '%s__%s' % (self.expression.name, self.name.lower())
-    default_alias = property(_default_alias)
+    def relabeled_clone(self, change_map):
+        # rebuild the clones children with new relabeled clones..
+        clone = copy.copy(self)
+        new_children = [
+            child.relabeled_clone(change_map) if hasattr(child, 'relabeled_clone')
+            else child
+            for child in clone.children]
+        clone.children = new_children
+        return clone
+
+    def contains_aggregate(self, existing_aggregates):
+        for child in self.children:
+            agg, lookup = child.contains_aggregate(existing_aggregates)
+            if agg:
+                return agg, lookup
+        return False, ()
+
+    def prepare_database_save(self, unused):
+        return self
+
+    def evaluate(self, compiler, connection):
+        # this method is here for compatability purposes
+        return self.as_sql(compiler, connection)
+
+    def get_cols(self):
+        cols = []
+        for child in self.children:
+            cols.extend(child.get_cols())
+        return cols
+
+    def get_sources(self):
+        sources = [self.source] if self.source is not None else []
+        for child in self.children:
+            sources.extend(child.get_sources())
+        return sources
 
     def _resolve_source(self):
         if self.source is None:
             sources = self.get_sources()
             num_sources = len(sources)
             if num_sources == 0:
-                raise FieldError("Cannot resolve aggregate type, unknown field_type")
+                raise FieldError("Cannot resolve aggregate type, unknown output_type")
             elif num_sources == 1:
                 self.source = sources[0]
             else:
@@ -245,7 +151,17 @@ class ExpressionNode(tree.Node):
                 for source in sources:
                     if not isinstance(self.source, source.__class__):
                         raise FieldError(
-                            "Complex aggregate contains mixed types. You must set field_type")
+                            "Expression contains mixed types. You must set output_type")
+
+    @property
+    def default_alias(self):
+        raise TypeError("Complex expressions require kwargs")
+
+    def __bool__(self):
+        """
+        For truth value testing.
+        """
+        return True
 
     #############
     # OPERATORS #
@@ -320,6 +236,53 @@ class ExpressionNode(tree.Node):
         )
 
 
+class WrappedExpression(ExpressionNode):
+    """
+    An expression capable of wrapping the output of another expression. This
+    is useful for writing and composing functions.
+    """
+
+    sql_template = '%(function)s(%(field)s)'
+    sql_function = None
+
+    def __init__(self, expression, output_type=None, **extra):
+        super(WrappedExpression, self).__init__(None, None, False)
+        if not isinstance(expression, ExpressionNode):
+            if hasattr(expression, 'as_sql'):
+                expression = ColumnNode(expression)
+            else:
+                # handle traditional string fields by wrapping
+                expression = F(expression)
+        self.expression = expression
+        self.source = output_type
+        self.extra = extra
+
+    def prepare(self, query=None, allow_joins=True, reuse=None):
+        self.expression.prepare(query, allow_joins, reuse)
+        if self.source is None:
+            self.source = self.expression.output_type
+        return self
+
+    def as_sql(self, compiler, connection):
+        sql, params = compiler.compile(self.expression)
+        substitutions = dict(function=self.sql_function, field=sql)
+        substitutions.update(self.extra)
+        return self.sql_template % substitutions, params
+
+    def get_sources(self):
+        if self.source is not None:
+            return [self.source]
+        return self.expression.get_sources()
+
+    def contains_aggregate(self, existing_aggregates):
+        return self.expression.contains_aggregate(existing_aggregates)
+
+    def relabeled_clone(self, change_map):
+        clone = copy.copy(self)
+        clone.expression = clone.expression.relabeled_clone(change_map)
+        return clone
+
+
 class F(ExpressionNode):
     """
     An expression representing the value of the given field.
@@ -331,11 +294,61 @@ class F(ExpressionNode):
         super(F, self).__init__(None, None, False)
         self.name = name
 
-    def get_sql(self, compiler, connection):
+    def prepare(self, query=None, allow_joins=True, reuse=None):
+        if not allow_joins and LOOKUP_SEP in self.name:
+            raise FieldError("Joined field references are not permitted in this query")
+
+        self.setup_cols(query, reuse)
+        return self
+
+    def as_sql(self, compiler, connection):
         if hasattr(self.col, 'as_sql'):
             return self.col.as_sql(compiler, connection)
         qn = compiler
         return '%s.%s' % (qn(self.col[0]), qn(self.col[1])), []
+
+    def setup_cols(self, query, reuse):
+        if query is None:
+            return
+        field_list = self.name.split(LOOKUP_SEP)
+        if self.name in query.aggregates:
+            self.col = query.aggregate_select[self.name]
+        else:
+            try:
+                field, sources, opts, join_list, path = query.setup_joins(
+                    field_list, query.get_meta(),
+                    query.get_initial_alias(), reuse)
+                self._used_joins = join_list
+                targets, _, join_list = query.trim_joins(sources, join_list, path)
+                if reuse is not None:
+                    reuse.update(join_list)
+                for t in targets:
+                    source = self.source if self.source is not None else sources[0]
+                    self.col = Col(join_list[-1], t, source)
+                if self.source is None:
+                    self.source = sources[0]
+            except FieldDoesNotExist:
+                raise FieldError("Cannot resolve keyword %r into field. "
+                                 "Choices are: %s" % (self.name,
+                                                      [f.name for f in self.opts.fields]))
+    def get_cols(self):
+        cols = []
+        if isinstance(self.col, tuple):
+            cols.append(self.col)
+        elif hasattr(self.col, 'get_cols'):
+            cols.extend(self.col.get_cols())
+        return cols
+
+    def contains_aggregate(self, existing_aggregates):
+        return refs_aggregate(self.name.split(LOOKUP_SEP), existing_aggregates)
+
+    def relabeled_clone(self, change_map):
+        clone = copy.copy(self)
+        if hasattr(clone.col, 'relabeled_clone'):
+            clone.col = clone.col.relabeled_clone(change_map)
+        elif clone.col:
+            clone.col = (change_map.get(clone.col[0], clone.col[0]), clone.col[1])
+        return clone
 
 
 class ValueNode(ExpressionNode):
@@ -345,35 +358,43 @@ class ValueNode(ExpressionNode):
     """
 
     # Josh (TODO): is "ValueNode" really the best name for what is simply
-    # a raw sql value?
-    def __init__(self, name, field_type=None):
+    # a raw sql value? Is there a security risk (SQL injection) here?
+    def __init__(self, name, output_type=None):
         super(ValueNode, self).__init__(None, None, False)
         self.name = name
-        self.source = field_type
+        self.source = output_type
 
-    def get_sql(self, compiler, connection):
-        return '%s' % self.name, []
+    def as_sql(self, compiler, connection):
+        return '%s' , [self.name]
 
 
 class ColumnNode(ValueNode):
     """
-    Represents a node that wraps a column object, allowing objects
-    that can act as Expressions to be used fully as one.
+    Represents a node that wraps a column object that adheres to the Query Expression API.
     """
 
     def __init__(self, column):
-        if not hasattr(column, 'as_sql') or not hasattr(column, 'relabeled_clone'):
-            raise TypeError("'column' must implement as_sql() and relabeled_clone()")
+        if (not hasattr(column, 'as_sql') or
+            not hasattr(column, 'get_lookup') or
+            not hasattr(column, 'output_type')):
+            raise TypeError("'column' must implement Query Expression API")
         super(ColumnNode, self).__init__(column)
         self.col = column
-        if hasattr(column, 'source'):
-            self.source = column.source
+        self.source = column.output_type
 
     def relabeled_clone(self, change_map):
         return self.name.relabeled_clone(change_map)
 
-    def get_sql(self, compiler, connection):
-        return self.name.as_sql(compiler, connection)
+    def as_sql(self, compiler, connection):
+        return compiler.compile(self.name)
+
+    def get_cols(self):
+        cols = []
+        if isinstance(self.col, tuple):
+            cols.append(self.col)
+        elif hasattr(self.col, 'get_cols'):
+            cols.extend(self.col.get_cols())
+        return cols
 
 
 class DateModifierNode(ExpressionNode):

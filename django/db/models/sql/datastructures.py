@@ -69,6 +69,17 @@ class Date(object):
             col = self.col
         return connection.ops.date_trunc_sql(self.lookup_type, col), []
 
+    @property
+    def output_type(self):
+        return self.source
+
+    @property
+    def field(self):
+        return self.source
+
+    def get_lookup(self, name):
+        return self.output_type.get_lookup(name)
+
 
 class DateTime(object):
     """
@@ -89,3 +100,15 @@ class DateTime(object):
         else:
             col = self.col
         return connection.ops.datetime_trunc_sql(self.lookup_type, col, self.tzname)
+
+    @property
+    def output_type(self):
+        return self.source
+
+    @property
+    def field(self):
+        return self.source
+
+    def get_lookup(self, name):
+        return self.output_type.get_lookup(name)
+
