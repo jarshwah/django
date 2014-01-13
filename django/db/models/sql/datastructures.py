@@ -60,7 +60,9 @@ class Date(object):
         self.source = fields.DateField()
 
     def relabeled_clone(self, change_map):
-        return self.__class__((change_map.get(self.col[0], self.col[0]), self.col[1]))
+        return self.__class__(
+            (change_map.get(self.col[0], self.col[0]), self.col[1]),
+            self.lookup_type)
 
     def as_sql(self, qn, connection):
         if isinstance(self.col, (list, tuple)):
@@ -92,7 +94,10 @@ class DateTime(object):
         self.source = fields.DateTimeField()
 
     def relabeled_clone(self, change_map):
-        return self.__class__((change_map.get(self.col[0], self.col[0]), self.col[1]))
+        return self.__class__(
+            (change_map.get(self.col[0], self.col[0]), self.col[1]),
+            self.lookup_type,
+            self.tzname)
 
     def as_sql(self, qn, connection):
         if isinstance(self.col, (list, tuple)):

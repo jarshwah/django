@@ -13,6 +13,7 @@ __all__ = [
 integer_field = IntegerField()
 float_field = FloatField()
 
+
 class Aggregate(WrappedExpression):
     is_aggregate = True
     name = None
@@ -52,13 +53,15 @@ class Aggregate(WrappedExpression):
                     self.expression.col = (None, name)
                     return
         super(Aggregate, self).prepare(query, allow_joins, reuse)
-        self._resolve_source()
+
+    def refs_field(self, aggregate_types, field_types):
+        return (isinstance(self, aggregate_types) and
+            isinstance(self.expression.source, field_types))
 
     def _default_alias(self):
         if hasattr(self.expression, 'name') and self.expression.validate_name:
             return '%s__%s' % (self.expression.name, self.name.lower())
         raise TypeError("Complex expressions require an alias")
-
     default_alias = property(_default_alias)
 
 

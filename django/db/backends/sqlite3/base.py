@@ -152,8 +152,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         bad_fields = (fields.DateField, fields.DateTimeField, fields.TimeField)
         bad_aggregates = (aggregates.Sum, aggregates.Avg,
                           aggregates.Variance, aggregates.StdDev)
-        if (isinstance(aggregate.source, bad_fields) and
-                isinstance(aggregate, bad_aggregates)):
+        if aggregate.refs_field(bad_aggregates, bad_fields):
             raise NotImplementedError(
                 'You cannot use Sum, Avg, StdDev and Variance aggregations '
                 'on date/time fields in sqlite3 '

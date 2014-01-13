@@ -102,12 +102,10 @@ class ExpressionNode(tree.Node):
         return self.output_type.get_lookup(lookup)
 
     def relabeled_clone(self, change_map):
-        # rebuild the clones children with new relabeled clones..
         clone = copy.copy(self)
         new_children = [
             child.relabeled_clone(change_map) if hasattr(child, 'relabeled_clone')
-            else child
-            for child in clone.children]
+            else child for child in clone.children]
         clone.children = new_children
         return clone
 
@@ -117,6 +115,12 @@ class ExpressionNode(tree.Node):
             if agg:
                 return agg, lookup
         return False, ()
+
+    def refs_field(self, aggregate_types, field_types):
+        """
+        Helper method for check_aggregate_support on backends
+        """
+        return any(child.refs_field(aggregate_types, field_types) for child in self.children)
 
     def prepare_database_save(self, unused):
         return self
@@ -142,7 +146,7 @@ class ExpressionNode(tree.Node):
             sources = self.get_sources()
             num_sources = len(sources)
             if num_sources == 0:
-                raise FieldError("Cannot resolve aggregate type, unknown output_type")
+                raise FieldError("Cannot resolve expression type, unknown output_type")
             elif num_sources == 1:
                 self.source = sources[0]
             else:
@@ -277,6 +281,9 @@ class WrappedExpression(ExpressionNode):
     def contains_aggregate(self, existing_aggregates):
         return self.expression.contains_aggregate(existing_aggregates)
 
+    def refs_field(self, aggregate_types, field_types):
+        return refs_field(self.expression)
+
     def relabeled_clone(self, change_map):
         clone = copy.copy(self)
         clone.expression = clone.expression.relabeled_clone(change_map)
@@ -339,6 +346,9 @@ class F(ExpressionNode):
             cols.extend(self.col.get_cols())
         return cols
 
+    def get_sources(self):
+        return [self.source] if self.source is not None else []
+
     def contains_aggregate(self, existing_aggregates):
         return refs_aggregate(self.name.split(LOOKUP_SEP), existing_aggregates)
 
@@ -358,7 +368,7 @@ class ValueNode(ExpressionNode):
     """
 
     # Josh (TODO): is "ValueNode" really the best name for what is simply
-    # a raw sql value? Is there a security risk (SQL injection) here?
+    # a raw sql value?
     def __init__(self, name, output_type=None):
         super(ValueNode, self).__init__(None, None, False)
         self.name = name
