@@ -756,6 +756,49 @@ class ComplexAggregateTestCase(TestCase):
         self.assertEqual(age['max_combined_age_doubled'], 176*2)
         self.assertEqual(age['sum_combined_age_doubled'], 954*2)
 
+    def test_values_annotation_with_expression(self):
+        # ensure the F() is promoted to the group by clause
+        qs = Author.objects.values('name').annotate(another_age=Sum('age')+F('age'))
+        a = qs.get(pk=1)
+        self.assertEqual(a['another_age'], 68)
+
+        qs = qs.annotate(friend_count=Count('friends'))
+        a = qs.get(pk=1)
+        self.assertEqual(a['friend_count'], 2)
+
+        qs = qs.annotate(combined_age=Sum('age')+F('friends__age')).filter(pk=1)
+        self.assertEqual(
+            list(qs), [
+                {
+                    "name": 'Adrian Holovaty',
+                    "another_age": 68,
+                    "friend_count": 1,
+                    "combined_age": 69
+                },
+                {
+                    "name": 'Adrian Holovaty',
+                    "another_age": 68,
+                    "friend_count": 1,
+                    "combined_age": 63
+                }
+            ]
+        )
+
+        vals = qs.values('name', 'combined_age')
+        self.assertEqual(
+            list(vals), [
+                {
+                    "name": 'Adrian Holovaty',
+                    "combined_age": 69
+                },
+                {
+                    "name": 'Adrian Holovaty',
+                    "combined_age": 63
+                }
+            ]
+        )
+
+
     def test_add_implementation(self):
         pass
 

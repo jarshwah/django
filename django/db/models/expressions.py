@@ -135,6 +135,12 @@ class ExpressionNode(tree.Node):
             cols.extend(child.get_cols())
         return cols
 
+    def get_group_by_cols(self):
+        cols = []
+        for child in self.children:
+            cols.extend(child.get_group_by_cols())
+        return cols
+
     def get_sources(self):
         sources = [self.source] if self.source is not None else []
         for child in self.children:
@@ -344,6 +350,14 @@ class F(ExpressionNode):
             cols.append(self.col)
         elif hasattr(self.col, 'get_cols'):
             cols.extend(self.col.get_cols())
+        return cols
+
+    def get_group_by_cols(self):
+        cols = []
+        if isinstance(self.col, tuple):
+            cols.append(self.col)
+        elif hasattr(self.col, 'get_group_by_cols'):
+            cols.extend(self.col.get_group_by_cols())
         return cols
 
     def get_sources(self):

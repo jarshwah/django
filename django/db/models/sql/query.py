@@ -1624,6 +1624,11 @@ class Query(object):
         for col, _ in self.select:
             self.group_by.append(col)
 
+        if self._aggregates:
+            for alias, aggregate in six.iteritems(self.aggregates):
+                for col in aggregate.get_group_by_cols():
+                    self.group_by.append(col)
+
     def add_count_column(self):
         """
         Converts the query to do count(...) or count(distinct(pk)) in order to
