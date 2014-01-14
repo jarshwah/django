@@ -99,8 +99,8 @@ class StdDev(Aggregate):
     name = 'StdDev'
 
     def __init__(self, expression, sample=False, **extra):
-        super(StdDev, self).__init__(expression, **extra)
         self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
+        super(StdDev, self).__init__(expression, **extra)
 
 
 class Sum(Aggregate):
@@ -113,5 +113,5 @@ class Variance(Aggregate):
     name = 'Variance'
 
     def __init__(self, expression, sample=False, **extra):
-        super(Variance, self).__init__(expression, **extra)
         self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
+        super(Variance, self).__init__(expression, **extra)

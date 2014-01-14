@@ -803,7 +803,7 @@ class QuerySet(object):
 
         # setup once the aggregates have been added so that group_by
         # cols in the aggregate are added to the group by clause
-        if aggregate_expr:
+        if aggregate_annotations:
             obj._setup_aggregate_query(list(aggregate_annotations))
 
         # TODO (Josh) Add non-aggregate annotations to the query

@@ -798,45 +798,48 @@ class ComplexAggregateTestCase(TestCase):
         )
 
     def test_add_implementation(self):
+        try:
+            # test completely changing how the output is rendered
+            def lower_case_function_override(self, qn, connection):
+                sql, params = qn.compile(self.expression)
+                substitutions = dict(function=self.sql_function.lower(), field=sql)
+                substitutions.update(self.extra)
+                return self.sql_template % substitutions, params
+            setattr(Sum, 'as_' + connection.vendor, lower_case_function_override)
 
-        # test completely changing how the output is rendered
-        def lower_case_function_override(self, qn, connection):
-            sql, params = qn.compile(self.expression)
-            substitutions = dict(function=self.sql_function.lower(), field=sql)
-            substitutions.update(self.extra)
-            return self.sql_template % substitutions, params
-        setattr(Sum, 'as_%s' % connection.vendor, lower_case_function_override)
+            qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+                output_type=IntegerField()))
+            self.assertEqual(str(qs.query).count('sum('), 1)
+            b1 = qs.get(pk=4)
+            self.assertEqual(b1.sums, 383)
 
-        qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            output_type=IntegerField()))
-        self.assertEqual(str(qs.query).count('sum('), 1)
-        b1 = qs.get(pk=4)
-        self.assertEqual(b1.sums, 383)
+            # test changing the dict and delegating
+            def lower_case_function_super(self, qn, connection):
+                self.extra['sql_function'] = self.extra['sql_function'].lower()
+                return super(Sum, self).as_sql(qn, connection)
+            setattr(Sum, 'as_' + connection.vendor, lower_case_function_super)
 
-        # test changing the dict and delegating
-        def lower_case_function_super(self, qn, connection):
-            self.extra['sql_function'] = self.extra['sql_function'].lower()
-            return super(Sum, self).as_sql(qn, connection)
-        setattr(Sum, 'as_%s' % connection.vendor, lower_case_function_super)
+            qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+                output_type=IntegerField()))
+            self.assertEqual(str(qs.query).count('sum('), 1)
+            b1 = qs.get(pk=4)
+            self.assertEqual(b1.sums, 383)
 
-        qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            output_type=IntegerField()))
-        self.assertEqual(str(qs.query).count('sum('), 1)
-        b1 = qs.get(pk=4)
-        self.assertEqual(b1.sums, 383)
+            # test overriding all parts of the template
+            def be_evil(self, qn, connection):
+                substitutions = dict(function='MAX', field='2')
+                substitutions.update(self.extra)
+                return self.sql_template % substitutions, ()
+            setattr(Sum, 'as_' + connection.vendor, be_evil)
 
-        # test overriding all parts of the template
-        def be_evil(self, qn, connection):
-            substitutions = dict(function='MAX', field='2')
-            substitutions.update(self.extra)
-            return self.sql_template % substitutions, ()
-        setattr(Sum, 'as_%s' % connection.vendor, be_evil)
+            qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
+                output_type=IntegerField()))
+            self.assertEqual(str(qs.query).count('MAX('), 1)
+            b1 = qs.get(pk=4)
+            self.assertEqual(b1.sums, 2)
+        finally:
+            delattr(Sum, 'as_' + connection.vendor)
 
-        qs = Book.objects.annotate(sums=Sum(F('rating')+F('pages')+F('price'),
-            output_type=IntegerField()))
-        self.assertEqual(str(qs.query).count('MAX('), 1)
-        b1 = qs.get(pk=4)
-        self.assertEqual(b1.sums, 2)
 
     def test_complex_values_aggregation(self):
         max_rating = Book.objects.values('rating').aggregate(
