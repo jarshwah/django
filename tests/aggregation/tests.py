@@ -8,8 +8,9 @@ from django.core.exceptions import FieldError
 from django.db import connection
 from django.db.models import (
     Avg, Sum, Count, Max, Min,
-    F, ValueNode,
+    Aggregate, F, ValueNode,
     IntegerField, FloatField, DecimalField)
+from django.db.models import sql
 from django.test import TestCase
 from django.test.utils import Approximate
 from django.test.utils import CaptureQueriesContext
@@ -840,7 +841,6 @@ class ComplexAggregateTestCase(TestCase):
         finally:
             delattr(Sum, 'as_' + connection.vendor)
 
-
     def test_complex_values_aggregation(self):
         max_rating = Book.objects.values('rating').aggregate(
             double_max_rating=Max('rating')+Max('rating'))
@@ -852,3 +852,21 @@ class ComplexAggregateTestCase(TestCase):
         self.assertEqual(
             max_books_per_rating,
             {'books_per_rating__max': 3+5})
+
+    def test_backwards_compatibility(self):
+
+        class SqlNewSum(sql.aggregates.Aggregate):
+            sql_function = 'SUM'
+
+        class NewSum(Aggregate):
+            name = 'Sum'
+
+            def add_to_query(self, query, alias, col, source, is_summary):
+                klass = SqlNewSum
+                aggregate = klass(
+                    col, source=source, is_summary=is_summary, **self.extra)
+                query.aggregates[alias] = aggregate
+
+        qs = Author.objects.values('name').annotate(another_age=NewSum('age')+F('age'))
+        a = qs.get(pk=1)
+        self.assertEqual(a['another_age'], 68)

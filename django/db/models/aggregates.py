@@ -52,6 +52,7 @@ class Aggregate(WrappedExpression):
                     # is built inside this aggregation.
                     self.expression.col = (None, name)
                     return
+        self._patch_aggregate(query)  # backward-compatibility support
         super(Aggregate, self).prepare(query, allow_joins, reuse)
 
     def refs_field(self, aggregate_types, field_types):
@@ -63,6 +64,42 @@ class Aggregate(WrappedExpression):
             return '%s__%s' % (self.expression.name, self.name.lower())
         raise TypeError("Complex expressions require an alias")
     default_alias = property(_default_alias)
+
+    def _patch_aggregate(self, query):
+        """
+        Helper method for patching 3rd party aggregates that do not yet support
+        the new way of subclassing.
+
+        add_to_query(query, alias, col, source, is_summary) will be defined on
+        legacy aggregates which, in turn, instantiates the SQL implementation of
+        the aggregate. In all the cases found, the general implementation of
+        add_to_query looks like:
+
+        def add_to_query(self, query, alias, col, source, is_summary):
+            klass = SQLImplementationAggregate
+            aggregate = klass(
+                col, source=source, is_summary=is_summary, **self.extra)
+            query.aggregates[alias] = aggregate
+
+        By supplying a known alias, we can get the SQLAggregate out of the aggregates
+        dict,  and use the sql_function and sql_template attributes to patch *this* aggregate.
+        """
+        if not hasattr(self, 'add_to_query') or self.sql_function is not None:
+            return
+
+        # raise a deprecation warning?
+
+        try:
+            placeholder_alias = "_XXXXXXXX_"
+            self.add_to_query(query, placeholder_alias, None, None, None)
+            sql_aggregate = query.aggregates.pop(placeholder_alias)
+            if 'sql_function' not in self.extra and hasattr(sql_aggregate, 'sql_function'):
+                self.extra['sql_function'] = sql_aggregate.sql_function
+
+            if hasattr(sql_aggregate, 'sql_template'):
+                self.extra['sql_template'] = sql_aggregate.sql_template
+        except:
+            pass  # raise an error here
 
 
 class Avg(Aggregate):
@@ -99,8 +136,8 @@ class StdDev(Aggregate):
     name = 'StdDev'
 
     def __init__(self, expression, sample=False, **extra):
-        self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
         super(StdDev, self).__init__(expression, **extra)
+        self.sql_function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
 
 
 class Sum(Aggregate):
@@ -113,5 +150,5 @@ class Variance(Aggregate):
     name = 'Variance'
 
     def __init__(self, expression, sample=False, **extra):
-        self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
         super(Variance, self).__init__(expression, **extra)
+        self.sql_function = 'VAR_SAMP' if sample else 'VAR_POP'
