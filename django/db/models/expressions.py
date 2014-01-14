@@ -3,7 +3,7 @@ import datetime
 
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.fields import FieldDoesNotExist, IntegerField, FloatField
+from django.db.models.fields import FieldDoesNotExist
 from django.db.models.query_utils import refs_aggregate
 from django.db.models.sql.datastructures import Col
 from django.utils.functional import cached_property
@@ -288,7 +288,7 @@ class WrappedExpression(ExpressionNode):
         return self.expression.contains_aggregate(existing_aggregates)
 
     def refs_field(self, aggregate_types, field_types):
-        return refs_field(self.expression)
+        return self.refs_field(self.expression)
 
     def relabeled_clone(self, change_map):
         clone = copy.copy(self)
@@ -344,6 +344,7 @@ class F(ExpressionNode):
                 raise FieldError("Cannot resolve keyword %r into field. "
                                  "Choices are: %s" % (self.name,
                                                       [f.name for f in self.opts.fields]))
+
     def get_cols(self):
         cols = []
         if isinstance(self.col, tuple):
@@ -389,7 +390,7 @@ class ValueNode(ExpressionNode):
         self.source = output_type
 
     def as_sql(self, compiler, connection):
-        return '%s' , [self.name]
+        return '%s', [self.name]
 
 
 class ColumnNode(ValueNode):
@@ -399,8 +400,8 @@ class ColumnNode(ValueNode):
 
     def __init__(self, column):
         if (not hasattr(column, 'as_sql') or
-            not hasattr(column, 'get_lookup') or
-            not hasattr(column, 'output_type')):
+                not hasattr(column, 'get_lookup') or
+                not hasattr(column, 'output_type')):
             raise TypeError("'column' must implement Query Expression API")
         super(ColumnNode, self).__init__(column)
         self.col = column

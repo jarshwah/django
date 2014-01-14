@@ -672,7 +672,6 @@ class ComplexAggregateTestCase(TestCase):
         with self.assertRaises(FieldError):
             Book.objects.annotate(val=Max(ValueNode(2)))[0]
 
-
     def test_annotation_expressions(self):
         authors = Author.objects.annotate(combined_ages=Sum(F('age')+F('friends__age'))).order_by('name')
         authors2 = Author.objects.annotate(combined_ages=Sum('age')+Sum('friends__age')).order_by('name')
@@ -797,7 +796,6 @@ class ComplexAggregateTestCase(TestCase):
                 }
             ]
         )
-
 
     def test_add_implementation(self):
         pass

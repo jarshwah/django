@@ -3,7 +3,7 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode, WrappedExpression, F, ValueNode
+from django.db.models.expressions import WrappedExpression, ValueNode
 from django.db.models.fields import IntegerField, FloatField
 
 __all__ = [
@@ -21,8 +21,8 @@ class Aggregate(WrappedExpression):
     def __init__(self, expression, output_type=None, **extra):
         super(Aggregate, self).__init__(expression, output_type, **extra)
         if self.expression.is_aggregate:
-            raise FieldError("Cannot compute %s(%s(..)): aggregates cannot be nested" %
-                (self.name, expression.name))
+            raise FieldError("Cannot compute %s(%s(..)): aggregates cannot be nested" % (
+                self.name, expression.name))
 
         if self.source is None:
             if self.is_ordinal:
@@ -31,7 +31,7 @@ class Aggregate(WrappedExpression):
                 self.source = float_field
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
-        if self.expression.validate_name: # simple lookup
+        if self.expression.validate_name:  # simple lookup
             name = self.expression.name
             field_list = name.split(LOOKUP_SEP)
             # this whole block was moved from sql/query.py to encapsulate, but will that
@@ -56,7 +56,7 @@ class Aggregate(WrappedExpression):
 
     def refs_field(self, aggregate_types, field_types):
         return (isinstance(self, aggregate_types) and
-            isinstance(self.expression.source, field_types))
+                isinstance(self.expression.source, field_types))
 
     def _default_alias(self):
         if hasattr(self.expression, 'name') and self.expression.validate_name:

@@ -16,7 +16,7 @@ from django.utils.tree import Node
 from django.utils import six
 from django.db import connections, DEFAULT_DB_ALIAS
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import ExpressionNode, F
+from django.db.models.expressions import ExpressionNode
 from django.db.models.fields import FieldDoesNotExist
 from django.db.models.lookups import Transform
 from django.db.models.query_utils import Q, refs_aggregate
