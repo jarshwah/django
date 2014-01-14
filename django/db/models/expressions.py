@@ -266,6 +266,10 @@ class WrappedExpression(ExpressionNode):
         self.expression = expression
         self.source = output_type
         self.extra = extra
+        if 'sql_template' not in extra:
+            self.extra['sql_template'] = self.sql_template
+        if 'sql_function' not in extra:
+            self.extra['sql_function'] = self.sql_function
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
         self.expression.prepare(query, allow_joins, reuse)
@@ -274,10 +278,12 @@ class WrappedExpression(ExpressionNode):
         return self
 
     def as_sql(self, compiler, connection):
+        if 'function' not in self.extra:
+            self.extra['function'] = self.extra['sql_function']
         sql, params = compiler.compile(self.expression)
-        substitutions = dict(function=self.sql_function, field=sql)
-        substitutions.update(self.extra)
-        return self.sql_template % substitutions, params
+        self.extra['field'] = sql
+        template = self.extra['sql_template']
+        return template % self.extra, params
 
     def get_sources(self):
         if self.source is not None:
