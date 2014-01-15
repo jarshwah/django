@@ -1,6 +1,6 @@
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields import FieldDoesNotExist
-from django.db.models.sql.expressions import SQLEvaluator
+from django.db.models.expressions import ExpressionNode
 from django.db.models.sql.where import Constraint, WhereNode
 from django.contrib.gis.db.models.fields import GeometryField
 
@@ -16,10 +16,12 @@ class GeoConstraint(Constraint):
         self.field = init_constraint.field
 
     def process(self, lookup_type, value, connection):
-        if isinstance(value, SQLEvaluator):
+        if isinstance(value, ExpressionNode):
             # Make sure the F Expression destination field exists, and
             # set an `srid` attribute with the same as that of the
             # destination.
+            # TODO (Josh): fix this. expression.name not always available,
+            # so perhaps do this check inside the expression itself
             geo_fld = GeoWhereNode._check_geo_field(value.opts, value.expression.name)
             if not geo_fld:
                 raise ValueError('No geographic field found in expression.')
