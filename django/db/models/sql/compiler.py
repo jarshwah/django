@@ -825,7 +825,7 @@ class SQLInsertCompiler(SQLCompiler):
         elif hasattr(field, 'get_placeholder'):
             # Some fields (e.g. geo fields) need special munging before
             # they can be inserted.
-            return field.get_placeholder(val, self.connection)
+            return field.get_placeholder(val, self, self.connection)
         else:
             # Return the common case for the placeholder
             return '%s'
@@ -937,7 +937,7 @@ class SQLUpdateCompiler(SQLCompiler):
 
             # Getting the placeholder for the field.
             if hasattr(field, 'get_placeholder'):
-                placeholder = field.get_placeholder(val, self.connection)
+                placeholder = field.get_placeholder(val, self, self.connection)
             else:
                 placeholder = '%s'
 
