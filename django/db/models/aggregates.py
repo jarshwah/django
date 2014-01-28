@@ -37,12 +37,12 @@ class Aggregate(WrappedExpression):
             # this whole block was moved from sql/query.py to encapsulate, but will that
             # possibly break custom query classes? The derived prepare() saves us a lot
             # of extra boilerplate though
-            if len(field_list) == 1 and name in query.aggregates:
+            if len(field_list) == 1 and name in query.annotations:
                 if not self.is_summary:
                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
                         self.name, name, name))
 
-                annotation = query.aggregates[name]
+                annotation = query.annotations[name]
                 if self.source is None:
                     self.source = annotation.output_type
                 if annotation.is_aggregate:

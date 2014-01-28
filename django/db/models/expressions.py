@@ -278,8 +278,8 @@ class F(ExpressionNode):
         if query is None:
             return
         field_list = self.name.split(LOOKUP_SEP)
-        if self.name in query.aggregates:
-            self.col = query.aggregate_select[self.name]
+        if self.name in query.annotations:
+            self.col = query.annotation_select[self.name]
         else:
             try:
                 field, sources, opts, join_list, path = query.setup_joins(

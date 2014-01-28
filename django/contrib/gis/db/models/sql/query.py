@@ -69,9 +69,9 @@ class GeoQuery(sql.Query):
         # Remove any aggregates marked for reduction from the subquery
         # and move them to the outer AggregateQuery.
         connection = connections[using]
-        for alias, aggregate in self.aggregate_select.items():
-            if isinstance(aggregate, gis_aggregates.GeoAggregate):
-                if not getattr(aggregate, 'is_extent', False) or connection.ops.oracle:
+        for alias, annotation in self.annotation_select.items():
+            if isinstance(annotation, gis_aggregates.GeoAggregate):
+                if not getattr(annotation, 'is_extent', False) or connection.ops.oracle:
                     self.extra_select_fields[alias] = GeomField()
         return super(GeoQuery, self).get_aggregation(using, force_subq)
 

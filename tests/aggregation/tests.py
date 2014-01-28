@@ -865,7 +865,7 @@ class ComplexAggregateTestCase(TestCase):
                 klass = SqlNewSum
                 aggregate = klass(
                     col, source=source, is_summary=is_summary, **self.extra)
-                query.aggregates[alias] = aggregate
+                query.annotations[alias] = aggregate
 
         qs = Author.objects.values('name').annotate(another_age=NewSum('age') + F('age'))
         a = qs.get(pk=1)

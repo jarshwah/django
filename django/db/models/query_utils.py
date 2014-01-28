@@ -223,6 +223,6 @@ def refs_aggregate(lookup_parts, aggregates):
     """
     for n in range(len(lookup_parts) + 1):
         level_n_lookup = LOOKUP_SEP.join(lookup_parts[0:n])
-        if level_n_lookup in aggregates:
+        if level_n_lookup in aggregates and aggregates[level_n_lookup].is_aggregate:
             return aggregates[level_n_lookup], lookup_parts[n:]
     return False, ()
