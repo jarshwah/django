@@ -67,6 +67,31 @@ class ExpressionNode(tree.Node):
         return obj
 
     def as_sql(self, compiler, connection):
+        """
+        Responsible for returning a (sql, [params]) tuple to be included
+        in the current query.
+
+        Different backends can provide their own implementation, by
+        providing an `as_{vendor}` method, and patching the Expression:
+
+        ```
+        def override_as_sql(self, compiler, connection):
+            print('override')
+            return super(ExpressionNode, self).as_sql(compiler, connection)
+        setattr(ExpressionNode, 'as_' + connection.vendor, override_as_sql)
+        ```
+
+        Arguments:
+         * compiler: the query compiler responsible for generating the query.
+           Must have a compile method, returning a (sql, [params]) tuple.
+           Calling compiler(value) will return a quoted `value`
+
+         * connection: the database connection used for the current query
+
+        Returns: (sql, params)
+          Where `sql` is a string containing ordered sql parameters to be
+          replaced with the elements of the list `params`
+        """
         expressions = []
         expression_params = []
         for child in self.children:
@@ -83,6 +108,18 @@ class ExpressionNode(tree.Node):
         return expression_wrapper % sql, expression_params
 
     def prepare(self, query=None, allow_joins=True, reuse=None):
+        """
+        Provides the chance to do any preprocessing or validation before being
+        added to the query.
+
+        Arguments:
+         * query: the backend query implementation
+         * allow_joins: boolean allowing or denying use of joins
+           in this query
+         * reuse: a set of reusable joins for multijoins
+
+        Returns: self
+        """
         for child in self.children:
             if hasattr(child, 'prepare'):
                 child.is_summary = self.is_summary
@@ -451,8 +488,7 @@ class WrappedExpression(ExpressionNode):
 
 class Value(ExpressionNode):
     """
-    Represents a wrapped value as a node, allowing all children
-    to act as nodes
+    Represents a wrapped value as a node within an expression
     """
 
     def __init__(self, name, output_type=None):
