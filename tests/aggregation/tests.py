@@ -663,6 +663,10 @@ class BaseAggregateTestCase(TestCase):
 class ComplexAggregateTestCase(TestCase):
     fixtures = ["aggregation.json"]
 
+    def test_nonaggregate_aggregation_throws(self):
+        with self.assertRaises(TypeError):
+            Book.objects.aggregate(fail=F('price'))
+
     def test_nonfield_annotation(self):
         book = Book.objects.annotate(val=Max(Value(2, output_type=IntegerField())))[0]
         self.assertEqual(book.val, 2)

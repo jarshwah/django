@@ -317,6 +317,8 @@ class QuerySet(object):
         query = self.query.clone()
         force_subq = query.low_mark != 0 or query.high_mark is not None
         for (alias, aggregate_expr) in kwargs.items():
+            if not aggregate_expr.is_aggregate:
+                raise TypeError("%s is not an aggregate expression", alias)
             query.add_annotation(aggregate_expr, self.model, alias, is_summary=True)
         return query.get_aggregation(using=self.db, force_subq=force_subq)
 
