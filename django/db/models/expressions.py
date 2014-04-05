@@ -478,7 +478,7 @@ class WrappedExpression(ExpressionNode):
         return self.expression.contains_aggregate(existing_aggregates)
 
     def refs_field(self, aggregate_types, field_types):
-        return self.refs_field(self.expression)
+        return self.expression.refs_field(aggregate_types, field_types)
 
     def relabeled_clone(self, change_map):
         clone = copy.copy(self)
