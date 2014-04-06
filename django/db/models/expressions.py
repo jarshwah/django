@@ -138,6 +138,9 @@ class ExpressionNode(tree.Node):
     def get_lookup(self, lookup):
         return self.output_type.get_lookup(lookup)
 
+    def get_transform(self, name):
+        return self.output_type.get_transform(name)
+
     def relabeled_clone(self, change_map):
         clone = copy.copy(self)
         new_children = [
