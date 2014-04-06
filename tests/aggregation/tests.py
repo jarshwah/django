@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 import datetime
 from decimal import Decimal
 import re
+import warnings
 
 from django.core.exceptions import FieldError
 from django.db import connection
@@ -14,6 +15,7 @@ from django.db.models import sql
 from django.test import TestCase
 from django.test.utils import Approximate
 from django.test.utils import CaptureQueriesContext
+from django.utils.deprecation import RemovedInDjango20Warning
 
 from .models import Author, Publisher, Book, Store
 
@@ -871,6 +873,8 @@ class ComplexAggregateTestCase(TestCase):
                     col, source=source, is_summary=is_summary, **self.extra)
                 query.annotations[alias] = aggregate
 
-        qs = Author.objects.values('name').annotate(another_age=NewSum('age') + F('age'))
-        a = qs.get(pk=1)
-        self.assertEqual(a['another_age'], 68)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RemovedInDjango20Warning)
+            qs = Author.objects.values('name').annotate(another_age=NewSum('age') + F('age'))
+            a = qs.get(pk=1)
+            self.assertEqual(a['another_age'], 68)

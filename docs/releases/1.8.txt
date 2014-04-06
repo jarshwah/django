@@ -184,4 +184,40 @@ Miscellaneous
 Features deprecated in 1.8
 ==========================
 
-...
+``django.db.models.sql.aggregates``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.aggregates`` is now redundant.
+``django.db.models.aggregates`` is now also responsible
+for SQL generation. See :doc:`Query Expressions </ref/models/expressions>`
+for instructions on writing custom aggregates.
+
+``django.db.models.sql.query.aggregates``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.query.aggregates`` has been supplanted by
+``django.db.models.sql.query.annotations``.
+
+``django.db.models.sql.query.add_aggregate``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.query.add_aggregate`` has been supplanted by
+``django.db.models.sql.query.add_annotation``.
+
+``django.db.models.sql.query.set_aggregate_mask``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.query.set_aggregate_mask`` has been supplanted by
+``django.db.models.sql.query.set_annotation_mask``.
+
+``django.db.models.sql.query.append_aggregate_mask``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.query.append_aggregate_mask`` has been supplanted by
+``django.db.models.sql.query.append_annotation_mask``.
+
+``django.db.models.sql.query.aggregate_select``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``django.db.models.sql.query.aggregate_select`` has been supplanted by
+``django.db.models.sql.query.annotation_select``.

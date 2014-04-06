@@ -2,9 +2,11 @@
 Classes to represent the default SQL aggregate functions
 """
 import copy
+import warnings
 
 from django.db.models.fields import IntegerField, FloatField
 from django.db.models.lookups import RegisterLookupMixin
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.functional import cached_property
 
 
@@ -44,6 +46,12 @@ class Aggregate(RegisterLookupMixin):
            type.
 
         """
+
+        warnings.warn(
+            "django.db.models.sql.aggregates is deprecated. Use "
+            "django.db.models.aggregates only. ",
+            RemovedInDjango20Warning, stacklevel=2)
+
         self.col = col
         self.source = source
         self.is_summary = is_summary

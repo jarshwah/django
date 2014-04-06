@@ -25,7 +25,7 @@ from django.db.models.sql.datastructures import EmptyResultSet, Empty, MultiJoin
 from django.db.models.sql.where import (WhereNode, Constraint, EverythingNode,
     ExtraWhere, AND, OR, EmptyWhere)
 from django.utils import six
-from django.utils.deprecation import RemovedInDjango19Warning
+from django.utils.deprecation import RemovedInDjango19Warning, RemovedInDjango20Warning
 from django.utils.encoding import force_text
 from django.utils.tree import Node
 
@@ -184,7 +184,9 @@ class Query(object):
 
     @property
     def aggregates(self):
-        # TODO (Josh): Raise a warning?
+        warnings.warn(
+            "The aggregates property is deprecated. Use annotations instead.",
+            RemovedInDjango20Warning, stacklevel=2)
         return self.annotations
 
     def __str__(self):
@@ -991,7 +993,9 @@ class Query(object):
         self.included_inherited_models = {}
 
     def add_aggregate(self, aggregate, model, alias, is_summary):
-        # TODO (Josh): Raise Warning
+        warnings.warn(
+            "add_aggregate() is deprecated. Use add_annotation() instead.",
+            RemovedInDjango20Warning, stacklevel=2)
         self.add_annotation(aggregate, model, alias, is_summary)
 
     def add_annotation(self, annotation, model, alias, is_summary):
@@ -1825,7 +1829,9 @@ class Query(object):
         target[model] = set(f.name for f in fields)
 
     def set_aggregate_mask(self, names):
-        # TODO (Josh): Raise Warning?
+        warnings.warn(
+            "set_aggregate_mask() is deprecated. Use set_annotation_mask() instead.",
+            RemovedInDjango20Warning, stacklevel=2)
         self.set_annotation_mask(names)
 
     def set_annotation_mask(self, names):
@@ -1837,12 +1843,14 @@ class Query(object):
         self._annotation_select_cache = None
 
     def append_aggregate_mask(self, names):
-        # TODO (Josh): Raise Warning?
+        warnings.warn(
+            "append_aggregate_mask() is deprecated. Use append_annotation_mask() instead.",
+            RemovedInDjango20Warning, stacklevel=2)
         self.append_annotation_mask(names)
 
     def append_annotation_mask(self, names):
         if self.annotation_select_mask is not None:
-            self.set_aggregate_mask(set(names).union(self.annotation_select_mask))
+            self.set_annotation_mask(set(names).union(self.annotation_select_mask))
 
     def set_extra_mask(self, names):
         """
@@ -1878,7 +1886,9 @@ class Query(object):
 
     @property
     def aggregate_select(self):
-        # TODO (Josh): Raise Warning?
+        warnings.warn(
+            "aggregate_select() is deprecated. Use annotation_select() instead.",
+            RemovedInDjango20Warning, stacklevel=2)
         return self.annotation_select
 
     @property
