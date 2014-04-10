@@ -13,6 +13,12 @@ from django.utils.functional import cached_property
 __all__ = ['Aggregate', 'Avg', 'Count', 'Max', 'Min', 'StdDev', 'Sum', 'Variance']
 
 
+warnings.warn(
+    "django.db.models.sql.aggregates is deprecated. Use "
+    "django.db.models.aggregates only. ",
+    RemovedInDjango20Warning, stacklevel=2)
+
+
 class Aggregate(RegisterLookupMixin):
     """
     Default SQL Aggregate.
@@ -46,11 +52,6 @@ class Aggregate(RegisterLookupMixin):
            type.
 
         """
-
-        warnings.warn(
-            "django.db.models.sql.aggregates is deprecated. Use "
-            "django.db.models.aggregates only. ",
-            RemovedInDjango20Warning, stacklevel=2)
 
         self.col = col
         self.source = source

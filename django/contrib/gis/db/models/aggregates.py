@@ -1,9 +1,7 @@
 from django.db.models.aggregates import Aggregate
-from django.db.models import aggregates
-from django.db.models.aggregates import *  # NOQA
 from django.contrib.gis.db.models.fields import GeometryField
 
-__all__ = ['Collect', 'Extent', 'Extent3D', 'MakeLine', 'Union'] + aggregates.__all__
+__all__ = ['Collect', 'Extent', 'Extent3D', 'MakeLine', 'Union']
 
 
 class GeoAggregate(Aggregate):

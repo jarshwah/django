@@ -48,10 +48,6 @@ Some examples
     >>> company.chairs_needed
     70
 
-    # Annotate a model with a simple value
-    Company.objects.annotate(
-        has_employees=Value(True, output_type=BooleanField()))
-
     # Annotate models with an aggregated value. Both forms
     # below are equivalent
     Company.objects.annotate(num_products=Count('products'))
@@ -189,6 +185,19 @@ expressions.
 
 .. class:: Aggregate(expression, output_type=None, **extra)
 
+  .. attribute:: sql_template
+
+    A class-level attribute, as a format string, that describes the SQL that
+    is generated for this aggregate. Example::
+
+        sql_template = '%(function)s( %(field)s )'
+
+  .. attribute:: sql_function
+
+    A class-level attribute describing the aggregate function that will be
+    generated. Specifically, the sql_function will be interpolated as the
+    ``function`` placeholder within ``sql_template``.
+
 The ``expression`` argument can be the name of a field on the model, or another
 expression.
 
@@ -202,9 +211,8 @@ database value into, like ``IntegerField()`` or ``FloatField()``.
     and a ``FloatField()`` together should probably have
     ``output_type=FloatField()`` defined for example.
 
-The ``**extra`` kwargs are ``key=value`` pairs that can be added to the
-generated SQL, provided the ``sql_template`` format string contains the
-key.
+The ``**extra`` kwargs are ``key=value`` pairs that can be interpolated
+into the `sql_template` attribute.
 
 An aggregate expression wraps the output of another expression with a SQL
 function. It also informs the query that a ``GROUP BY`` expression is
@@ -240,8 +248,15 @@ SQL that is generated. See a brief example below::
             super(LowercaseSum, self).__init__(expression, output_type=output_type, **extra)
 
 
+Technical Information
+~~~~~~~~~~~~~~~~~~~~~
+
+Below you'll find technical implementation details that may be useful to
+library authors. The technical API and examples below will help with
+creating generic Query Expressions that can extend Django.
+
 Expression API
-~~~~~~~~~~~~~~
+==============
 
 Query Expressions implement the :ref:`query expression API <query-expression>`,
 but also expose a number of extra methods and attributes listed below. All
@@ -359,7 +374,7 @@ delegating the methods.
 
 
 Writing your own Query Expressions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==================================
 
 You are able to write your own Query Expression classes that use, and
 can integrate with, other Query Expressions. Let's step through an example

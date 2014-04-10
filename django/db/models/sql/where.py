@@ -10,7 +10,6 @@ import warnings
 from django.conf import settings
 from django.db.models.fields import DateTimeField, Field
 from django.db.models.sql.datastructures import EmptyResultSet, Empty
-from django.db.models.sql.aggregates import Aggregate
 from django.utils.deprecation import RemovedInDjango19Warning
 from django.utils.six.moves import xrange
 from django.utils import timezone
@@ -187,11 +186,9 @@ class WhereNode(tree.Node):
                 lvalue, params = lvalue.process(lookup_type, params_or_value, connection)
             except EmptyShortCircuit:
                 raise EmptyResultSet
-        elif isinstance(lvalue, Aggregate):
-            params = lvalue.field.get_db_prep_lookup(lookup_type, params_or_value, connection)
         else:
-            raise TypeError("'make_atom' expects a Constraint or an Aggregate "
-                            "as the first item of its 'child' argument.")
+            raise TypeError("'make_atom' expects a Constraint as the first "
+                            "item of its 'child' argument.")
 
         if isinstance(lvalue, tuple):
             # A direct database column lookup.
