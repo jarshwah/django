@@ -11,7 +11,7 @@ from django.db.models import (
     Avg, Sum, Count, Max, Min,
     Aggregate, F, Value,
     IntegerField, FloatField, DecimalField)
-from django.db.models import sql
+from django.db.models.sql import aggregates as sql_aggregates
 from django.test import TestCase
 from django.test.utils import Approximate
 from django.test.utils import CaptureQueriesContext
@@ -861,7 +861,7 @@ class ComplexAggregateTestCase(TestCase):
 
     def test_backwards_compatibility(self):
 
-        class SqlNewSum(sql.aggregates.Aggregate):
+        class SqlNewSum(sql_aggregates.Aggregate):
             sql_function = 'SUM'
 
         class NewSum(Aggregate):
