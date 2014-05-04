@@ -618,7 +618,18 @@ class QuerySet(object):
                 params=params, translations=translations,
                 using=using)
 
-    def values(self, *fields):
+    def values(self, *fields, **aliased_fields):
+        # aliased values can be implemented as
+        #    .annotate(alias=name).values(alias)
+        from django.db.models import F  # avoid import issues..
+        if aliased_fields:
+            annotate_args = { a: F(f) for a, f in aliased_fields.items() }
+            clone = self.annotate(**annotate_args)
+            combined_fields = fields + tuple(aliased_fields.values())
+            return clone._clone(
+                klass=ValuesQuerySet,
+                setup=True,
+                _fields=combined_fields)
         return self._clone(klass=ValuesQuerySet, setup=True, _fields=fields)
 
     def values_list(self, *fields, **kwargs):

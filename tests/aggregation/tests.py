@@ -608,6 +608,37 @@ class BaseAggregateTestCase(TestCase):
             max_books_per_rating,
             {'books_per_rating__max': 3})
 
+    def test_values_with_aliases_plus_aggregation(self):
+        # Refs #16735
+        # Simple aggregate over an aliased field name
+        score = Book.objects.values(score='rating').aggregate(max=Max('score'))
+        self.assertEqual(score['max'], 5)
+
+    def test_values_with_aliases_plus_annotation(self):
+        # Anotation over an aliased field computes the same values as with the
+        # original field
+        no_alias = Book.objects.values('rating').annotate(books_per_rating=Count('id'))
+        with_alias = Book.objects.values(score='rating').annotate(books_per_rating=Count('id'))
+        renamed = []
+        for d in with_alias:
+            copyd = {'books_per_rating': d['books_per_rating'], 'rating': d['score']}
+            renamed.append(copyd)
+        self.assertEqual(list(no_alias), renamed)
+
+        # Anotation over an aliased field computes the same values as with the
+        # original field. Combined with field list
+        no_alias = Book.objects.values('isbn', 'rating').annotate(books_per_rating=Count('id'))
+        with_alias = Book.objects.values('isbn', score='rating').annotate(books_per_rating=Count('id'))
+        renamed = []
+        for d in with_alias:
+            copyd = d.copy()
+            copyd['rating'] = d['score']
+            del copyd['score']
+            renamed.append(copyd)
+        self.assertTrue('isbn' in with_alias[0])
+        self.assertTrue('books_per_rating' in with_alias[0])
+        self.assertEqual(list(no_alias), renamed)
+
     def test_ticket17424(self):
         """
         Check that doing exclude() on a foreign model after annotate()
