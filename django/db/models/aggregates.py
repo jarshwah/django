@@ -34,22 +34,16 @@ class Aggregate(WrappedExpression):
         if self.expression.validate_name:  # simple lookup
             name = self.expression.name
             field_list = name.split(LOOKUP_SEP)
-            # this whole block was moved from sql/query.py to encapsulate, but will that
-            # possibly break custom query classes? The derived prepare() saves us a lot
-            # of extra boilerplate though
             if len(field_list) == 1 and name in query.annotations:
-                if not self.is_summary:
+                if query.annotations[name].is_aggregate and not self.is_summary:
                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
                         self.name, name, name))
 
                 annotation = query.annotations[name]
                 if self.source is None:
                     self.source = annotation.output_type
-                if annotation.is_aggregate:
-                    # aggregation is over an aggregated annotation:
-                    # manually set the column, and don't prepare the expression
-                    # otherwise the full annotation, including the agg function,
-                    # is built inside this aggregation.
+                if self.is_summary:
+                    # force subquery relabel
                     self.expression.col = (None, name)
                     return
         self._patch_aggregate(query)  # backward-compatibility support
