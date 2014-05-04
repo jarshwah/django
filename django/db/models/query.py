@@ -625,7 +625,7 @@ class QuerySet(object):
         if aliased_fields:
             annotate_args = { a: F(f) for a, f in aliased_fields.items() }
             clone = self.annotate(**annotate_args)
-            combined_fields = fields + tuple(aliased_fields.values())
+            combined_fields = fields + tuple(aliased_fields.keys())
             return clone._clone(
                 klass=ValuesQuerySet,
                 setup=True,
