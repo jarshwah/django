@@ -759,6 +759,10 @@ class TransactionTestCase(SimpleTestCase):
     # This can be slow; this flag allows enabling on a per-case basis.
     serialized_rollback = False
 
+    # Should connections be closed per test_method (True) or
+    # per TestCase (False)?
+    reset_connections_per_test_method = True
+
     def _pre_setup(self):
         """Performs any pre-test setup. This includes:
 
@@ -788,10 +792,11 @@ class TransactionTestCase(SimpleTestCase):
 
             raise
 
-    def _databases_names(self, include_mirrors=True):
+    @classmethod
+    def _databases_names(cls, include_mirrors=True):
         # If the test case has a multi_db=True flag, act on all databases,
         # including mirrors or not. Otherwise, just on the default DB.
-        if getattr(self, 'multi_db', False):
+        if getattr(cls, 'multi_db', False):
             return [alias for alias in connections
                     if include_mirrors or not connections[alias].settings_dict['TEST']['MIRROR']]
         else:
@@ -831,6 +836,13 @@ class TransactionTestCase(SimpleTestCase):
                 call_command('loaddata', *self.fixtures,
                              **{'verbosity': 0, 'database': db_name, 'skip_checks': True})
 
+    @classmethod
+    def tearDownClass(cls):
+        super(TransactionTestCase, cls).tearDownClass()
+        # ensure all connections are now closed
+        for conn in connections.all():
+            conn.close()
+
     def _post_teardown(self):
         """Performs any post-test things. This includes:
 
@@ -847,8 +859,9 @@ class TransactionTestCase(SimpleTestCase):
             # tests (e.g., losing a timezone setting causing objects to be
             # created with the wrong time). To make sure this doesn't happen,
             # get a clean connection at the start of every test.
-            for conn in connections.all():
-                conn.close()
+            if self.reset_connections_per_test_method:
+                for conn in connections.all():
+                    conn.close()
         finally:
             if self.available_apps is not None:
                 apps.unset_available_apps()
@@ -910,23 +923,39 @@ class TestCase(TransactionTestCase):
     inside a test.
     """
 
-    def _fixture_setup(self):
-        if not connections_support_transactions():
-            return super(TestCase, self)._fixture_setup()
+    # close connections (once) at the end of the entire TestCase
+    reset_connections_per_test_method = False
 
-        assert not self.reset_sequences, 'reset_sequences cannot be used on TestCase instances'
+    @classmethod
+    def setUpClass(cls):
+        if connections_support_transactions():
+            cls.class_atomics = {}
+            for db_name in cls._databases_names(include_mirrors=False):
+                cls.class_atomics[db_name] = transaction.atomic(using=db_name)
+                cls.class_atomics[db_name].__enter__()
+            # Remove this when the legacy transaction management goes away.
+            disable_transaction_methods()
+            cls.load_fixtures()
+        return super(TestCase, cls).setUpClass()
 
-        self.atomics = {}
-        for db_name in self._databases_names():
-            self.atomics[db_name] = transaction.atomic(using=db_name)
-            self.atomics[db_name].__enter__()
-        # Remove this when the legacy transaction management goes away.
-        disable_transaction_methods()
+    @classmethod
+    def tearDownClass(cls):
+        if connections_support_transactions():
+            for db_name in reversed(cls._databases_names()):
+                if connections[db_name].connection is None:
+                    continue
+                # force a rollback, removing fixtures
+                #connections[db_name].needs_rollback = True
+                cls.class_atomics[db_name].__exit__(ValueError, "Rollback", None)
+            restore_transaction_methods()
+        return super(TestCase, cls).tearDownClass()
 
-        for db_name in self._databases_names(include_mirrors=False):
-            if self.fixtures:
+    @classmethod
+    def load_fixtures(cls):
+        for db_name in cls._databases_names(include_mirrors=False):
+            if cls.fixtures:
                 try:
-                    call_command('loaddata', *self.fixtures,
+                    call_command('loaddata', *cls.fixtures,
                                  **{
                                      'verbosity': 0,
                                      'commit': False,
@@ -934,19 +963,29 @@ class TestCase(TransactionTestCase):
                                      'skip_checks': True,
                                  })
                 except Exception:
-                    self._fixture_teardown()
+                    cls.remove_fixtures()
                     raise
+
+    def _fixture_setup(self):
+        if not connections_support_transactions():
+            return super(TestCase, self)._fixture_setup()
+
+        assert not self.reset_sequences, 'reset_sequences cannot be used on TestCase instances'
+
+        # fixtures were already loaded so we just create savepoints for
+        # test_method
+        self.atomics = {}
+        for db_name in self._databases_names():
+            self.atomics[db_name] = transaction.atomic(using=db_name)
+            self.atomics[db_name].__enter__()
 
     def _fixture_teardown(self):
         if not connections_support_transactions():
             return super(TestCase, self)._fixture_teardown()
 
-        # Remove this when the legacy transaction management goes away.
-        restore_transaction_methods()
+        # rollback test_method savepoints
         for db_name in reversed(self._databases_names()):
-            # Hack to force a rollback
-            connections[db_name].needs_rollback = True
-            self.atomics[db_name].__exit__(None, None, None)
+            self.atomics[db_name].__exit__(ValueError, "Rollback", None)
 
 
 class CheckCondition(object):
