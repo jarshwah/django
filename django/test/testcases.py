@@ -928,6 +928,11 @@ class TestCase(TransactionTestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.prepare_fixtures()
+        return super(TestCase, cls).setUpClass()
+
+    @classmethod
+    def prepare_fixtures(cls):
         if connections_support_transactions():
             cls.class_atomics = {}
             for db_name in cls._databases_names(include_mirrors=False):
@@ -935,36 +940,41 @@ class TestCase(TransactionTestCase):
                 cls.class_atomics[db_name].__enter__()
             # Remove this when the legacy transaction management goes away.
             disable_transaction_methods()
-            cls.load_fixtures()
-        return super(TestCase, cls).setUpClass()
+            try:
+                cls.load_fixtures()
+            except:
+                cls.destroy_fixtures()
+                raise
 
     @classmethod
     def tearDownClass(cls):
+        cls.destroy_fixtures()
+        return super(TestCase, cls).tearDownClass()
+
+    @classmethod
+    def destroy_fixtures(cls):
         if connections_support_transactions():
             for db_name in reversed(cls._databases_names()):
                 if connections[db_name].connection is None:
                     continue
                 # force a rollback, removing fixtures
-                #connections[db_name].needs_rollback = True
-                cls.class_atomics[db_name].__exit__(ValueError, "Rollback", None)
+                connections[db_name].needs_rollback = True
+                cls.class_atomics[db_name].__exit__(None, None, None)
+            for conn in connections.all():
+                conn.close()
             restore_transaction_methods()
-        return super(TestCase, cls).tearDownClass()
 
     @classmethod
     def load_fixtures(cls):
         for db_name in cls._databases_names(include_mirrors=False):
             if cls.fixtures:
-                try:
-                    call_command('loaddata', *cls.fixtures,
-                                 **{
-                                     'verbosity': 0,
-                                     'commit': False,
-                                     'database': db_name,
-                                     'skip_checks': True,
-                                 })
-                except Exception:
-                    cls.remove_fixtures()
-                    raise
+                kwargs = {
+                    'verbosity': 0,
+                    'commit': False,
+                    'database': db_name,
+                    'skip_checks': True,
+                }
+                call_command('loaddata', *cls.fixtures, **kwargs)
 
     def _fixture_setup(self):
         if not connections_support_transactions():
@@ -979,13 +989,45 @@ class TestCase(TransactionTestCase):
             self.atomics[db_name] = transaction.atomic(using=db_name)
             self.atomics[db_name].__enter__()
 
+        if not hasattr(self, 'class_atomics'):
+            # failed to call super().setUpClass(), so create the fixtures
+            # in this transaction instead
+            try:
+                self.load_fixtures()
+            except:
+                self._fixture_teardown()
+                raise
+
     def _fixture_teardown(self):
         if not connections_support_transactions():
             return super(TestCase, self)._fixture_teardown()
 
         # rollback test_method savepoints
         for db_name in reversed(self._databases_names()):
-            self.atomics[db_name].__exit__(ValueError, "Rollback", None)
+            connections[db_name].needs_rollback = True
+            self.atomics[db_name].__exit__(None, None, None)
+
+        if not hasattr(self, 'class_atomics'):
+            # transactions werent started from setUpClass so we'll be safe
+            # and close connections now
+            for conn in connections.all():
+                conn.close()
+            return
+
+        for db_name in reversed(self._databases_names()):
+            if connections[db_name].connection is None:
+                continue
+            try:
+                # this will fail if the connection was closed forcably
+                reset_connections = not connections[db_name].is_usable()
+            except:
+                reset_connections = True
+            if reset_connections:
+                # someone has manipulated the connection, create
+                # a new environment
+                self.destroy_fixtures()
+                self.prepare_fixtures()
+                break
 
 
 class CheckCondition(object):
