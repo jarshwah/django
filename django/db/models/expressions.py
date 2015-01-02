@@ -6,7 +6,7 @@ from django.core.exceptions import FieldError
 from django.db.backends import utils as backend_utils
 from django.db.models import fields
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.query_utils import refs_aggregate
+from django.db.models.query_utils import refs_aggregate, Q
 from django.utils import timezone
 from django.utils.functional import cached_property
 
@@ -173,7 +173,7 @@ class ExpressionNode(CombinableMixin):
                 return True
         return False
 
-    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         """
         Provides the chance to do any preprocessing or validation before being
         added to the query.
@@ -358,11 +358,11 @@ class Expression(ExpressionNode):
         sql = connection.ops.combine_expression(self.connector, expressions)
         return expression_wrapper % sql, expression_params
 
-    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         c = self.copy()
         c.is_summary = summarize
-        c.lhs = c.lhs.resolve_expression(query, allow_joins, reuse, summarize)
-        c.rhs = c.rhs.resolve_expression(query, allow_joins, reuse, summarize)
+        c.lhs = c.lhs.resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        c.rhs = c.rhs.resolve_expression(query, allow_joins, reuse, summarize, for_save)
         return c
 
 
@@ -404,7 +404,7 @@ class F(CombinableMixin):
         """
         self.name = name
 
-    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         return query.resolve_ref(self.name, allow_joins, reuse, summarize)
 
     def refs_aggregate(self, existing_aggregates):
@@ -437,11 +437,11 @@ class Func(ExpressionNode):
             for arg in expressions
         ]
 
-    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         c = self.copy()
         c.is_summary = summarize
         for pos, arg in enumerate(c.source_expressions):
-            c.source_expressions[pos] = arg.resolve_expression(query, allow_joins, reuse, summarize)
+            c.source_expressions[pos] = arg.resolve_expression(query, allow_joins, reuse, summarize, for_save)
         return c
 
     def as_sql(self, compiler, connection, function=None, template=None):
@@ -483,12 +483,23 @@ class Value(ExpressionNode):
         self.value = value
 
     def as_sql(self, compiler, connection):
-        if self.value is None:
+        val = self.value
+        if self._output_field_or_none is not None:
+            if self.for_save:
+                val = self.output_field.get_db_prep_save(val, connection=connection)
+            else:
+                val = self.output_field.get_db_prep_value(val, connection=connection)
+        if val is None:
             # cx_Oracle does not always convert None to the appropriate
             # NULL type (like in case expressions using numbers), so we
             # use a literal SQL NULL
             return 'NULL', []
-        return '%s', [self.value]
+        return '%s', [val]
+
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
+        c = super(Value, self).resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        c.for_save = for_save
+        return c
 
 
 class DurationValue(Value):
@@ -543,6 +554,173 @@ class Ref(ExpressionNode):
         return [self]
 
 
+class WhenClause(ExpressionNode):
+    template = 'WHEN %(condition)s THEN %(result)s'
+
+    def __init__(self, condition, result, output_field=None):
+        super(WhenClause, self).__init__(output_field=output_field)
+        self.condition = self._parse_expression(condition)
+        self.result = self._parse_expression(result)
+
+    def get_source_expressions(self):
+        return [self.condition, self.result]
+
+    def set_source_expressions(self, exprs):
+        self.condition, self.result = exprs
+
+    def get_source_fields(self):
+        """We're only interested in the fields of the result expressions."""
+        return [self.result._output_field_or_none]
+
+    def _parse_expression(self, expression):
+        return expression if hasattr(expression, 'resolve_expression') else F(expression)
+
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
+        c = self.copy()
+        c.is_summary = summarize
+        c.condition = c.condition.resolve_expression(query, allow_joins, reuse, summarize, False)
+        c.result = c.result.resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        return c
+
+    def as_sql(self, compiler, connection, template=None):
+        template_params = {}
+        sql_params = []
+        condition_sql, condition_params = compiler.compile(self.condition)
+        template_params['condition'] = condition_sql
+        sql_params.extend(condition_params)
+        result_sql, result_params = compiler.compile(self.result)
+        template_params['result'] = result_sql
+        sql_params.extend(result_params)
+        template = template or self.template
+        return template % template_params, sql_params
+
+
+class BaseCaseExpression(ExpressionNode):
+    """
+    Base class for all case expressions.
+    """
+    template = 'CASE %(cases)s ELSE %(default)s END'
+    case_joiner = ' '
+
+    def __init__(self, cases=None, default=Value(None), output_field=None):
+        super(BaseCaseExpression, self).__init__(output_field)
+        self.cases = self._parse_cases(cases)
+        self.default = default if hasattr(default, 'resolve_expression') else F(default)
+
+    def get_source_expressions(self):
+        return self.cases + [self.default]
+
+    def set_source_expressions(self, exprs):
+        self.cases = exprs[:-1]
+        self.default = exprs[-1]
+
+    def _parse_cases(self, cases):
+        if not cases:
+            return []
+        return [WhenClause(condition, result) for condition, result in cases]
+
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
+        c = self.copy()
+        c.is_summary = summarize
+        for pos, case in enumerate(c.cases):
+            c.cases[pos] = case.resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        c.default = c.default.resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        return c
+
+    def as_sql(self, compiler, connection, template=None, extra=None):
+        if not self.cases:
+            return compiler.compile(self.default)
+        template_params = dict(extra) if extra else {}
+        case_parts = []
+        sql_params = []
+        for case in self.cases:
+            case_sql, case_params = compiler.compile(case)
+            case_parts.append(case_sql)
+            sql_params.extend(case_params)
+        template_params['cases'] = self.case_joiner.join(case_parts)
+        default_sql, default_params = compiler.compile(self.default)
+        template_params['default'] = default_sql
+        sql_params.extend(default_params)
+        template = template or self.template
+        sql = template % template_params
+        if self._output_field_or_none is not None:
+            sql = connection.ops.case_cast_sql(
+                self.output_field.db_type(connection),
+                self.output_field.get_internal_type(),
+            ) % sql
+        return sql, sql_params
+
+
+class SimpleCase(BaseCaseExpression):
+    """
+    An SQL simple CASE expression:
+
+        CASE n
+            WHEN 1
+                THEN 'one'
+            WHEN 2
+                THEN 'two'
+            ELSE 'I cannot count that high'
+        END
+    """
+    template = 'CASE %(predicate)s %(cases)s ELSE %(default)s END'
+
+    def __init__(self, predicate, cases=None, default=Value(None), output_field=None):
+        super(SimpleCase, self).__init__(cases, default, output_field)
+        self.predicate = predicate if hasattr(predicate, 'resolve_expression') else F(predicate)
+
+    def get_source_expressions(self):
+        return super(SimpleCase, self).get_source_expressions() + [self.predicate]
+
+    def set_source_expressions(self, exprs):
+        super(SimpleCase, self).set_source_expressions(exprs[:-1])
+        self.predicate = exprs[-1]
+
+    def get_source_fields(self):
+        """Don't include predicate in source fields."""
+        return [e._output_field_or_none for e in super(SimpleCase, self).get_source_expressions()]
+
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
+        c = super(SimpleCase, self).resolve_expression(query, allow_joins, reuse, summarize, for_save)
+        c.predicate = c.predicate.resolve_expression(query, allow_joins, reuse, summarize, False)
+        return c
+
+    def as_sql(self, compiler, connection, template=None, extra=None):
+        predicate_sql, predicate_params = compiler.compile(self.predicate)
+        extra = dict(extra) if extra else {}
+        extra['predicate'] = predicate_sql
+        sql, params = super(SimpleCase, self).as_sql(compiler, connection, template, extra)
+        predicate_params.extend(params)
+        return sql, predicate_params
+
+
+class SearchedCase(BaseCaseExpression):
+    """
+    An SQL searched CASE expression:
+
+        CASE
+            WHEN n > 0
+                THEN 'positive'
+            WHEN n < 0
+                THEN 'negative'
+            ELSE 'zero'
+        END
+    """
+    def _parse_cases(self, cases):
+        if not cases:
+            return []
+        if not all(isinstance(condition, Q) for condition, result in cases):
+            raise TypeError("Conditions must be Q objects.")
+        return super(SearchedCase, self)._parse_cases(cases)
+
+
+class Case(object):
+    def __new__(cls, predicate=None, cases=None, default=Value(None), output_field=None):
+        if predicate is None:
+            return SearchedCase(cases, default, output_field)
+        return SimpleCase(predicate, cases, default, output_field)
+
+
 class Date(ExpressionNode):
     """
     Add a date selection column.
@@ -559,7 +737,7 @@ class Date(ExpressionNode):
     def set_source_expressions(self, exprs):
         self.col, = exprs
 
-    def resolve_expression(self, query, allow_joins, reuse, summarize):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         copy = self.copy()
         copy.col = query.resolve_ref(self.lookup, allow_joins, reuse, summarize)
         field = copy.col.output_field
@@ -608,7 +786,7 @@ class DateTime(ExpressionNode):
     def set_source_expressions(self, exprs):
         self.col, = exprs
 
-    def resolve_expression(self, query, allow_joins, reuse, summarize):
+    def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         copy = self.copy()
         copy.col = query.resolve_ref(self.lookup, allow_joins, reuse, summarize)
         field = copy.col.output_field

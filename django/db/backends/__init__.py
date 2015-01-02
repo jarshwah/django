@@ -823,6 +823,15 @@ class BaseDatabaseOperations(object):
         """
         return "SELECT cache_key FROM %s ORDER BY cache_key LIMIT 1 OFFSET %%s"
 
+    def case_cast_sql(self, db_type, internal_type):
+        """
+        Given a column type (e.g. 'BLOB', 'VARCHAR'), and an internal type
+        (e.g. 'GenericIPAddressField'), returns the SQL necessary to cast the
+        case expression to that type. Note that the resulting string should
+        contain a '%s' placeholder for the column being searched against.
+        """
+        return '%s'
+
     def date_extract_sql(self, lookup_type, field_name):
         """
         Given a lookup_type of 'year', 'month' or 'day', returns the SQL that

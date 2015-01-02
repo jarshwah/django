@@ -5,6 +5,15 @@ from django.db.backends import BaseDatabaseOperations
 
 
 class DatabaseOperations(BaseDatabaseOperations):
+    def case_cast_sql(self, db_type, internal_type):
+        if (internal_type == "GenericIPAddressField" or internal_type == "IPAddressField" or
+                internal_type == "TimeField" or internal_type == "UUIDField"):
+            # cast expression for postgres - removing components of the type
+            # within brackets: varchar(255) -> varchar. Required for values
+            # that look like strings but are more specific types like uuid or
+            # inet.
+            return 'CAST(%%s AS %s)' % db_type.split('(')[0]
+        return '%s'
 
     def date_extract_sql(self, lookup_type, field_name):
         # http://www.postgresql.org/docs/current/static/functions-datetime.html#FUNCTIONS-DATETIME-EXTRACT
