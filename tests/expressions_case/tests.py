@@ -2,7 +2,7 @@ from __future__ import unicode_literals
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from operator import attrgetter
+from operator import attrgetter, itemgetter
 from unittest import TestSuite
 from uuid import UUID
 
@@ -52,6 +52,35 @@ class BaseCaseExpressionTests(TestCase):
         O2OCaseTestModel.objects.create(o2o=o, integer=1)
         FKCaseTestModel.objects.create(fk=o, integer=5)
 
+        # See #24096
+        cls.non_lob_fields = [
+            'integer',
+            'integer2',
+            'string',
+            'big_integer',
+            'boolean',
+            'comma_separated_integer',
+            'date',
+            'date_time',
+            'decimal',
+            'duration',
+            'email',
+            'file',
+            'file_path',
+            'float',
+            'image',
+            'ip_address',
+            'generic_ip_address',
+            'null_boolean',
+            'positive_integer',
+            'positive_small_integer',
+            'slug',
+            'small_integer',
+            'time',
+            'url',
+            'uuid',
+            'fk'
+        ]
 
     def test_annotate(self):
         self.assertQuerysetEqual(
@@ -167,7 +196,7 @@ class BaseCaseExpressionTests(TestCase):
 
     def test_annotate_with_aggregation_in_value(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 min=Min('fk_rel__integer'),
                 max=Max('fk_rel__integer')
             ).annotate(
@@ -176,11 +205,11 @@ class BaseCaseExpressionTests(TestCase):
                     [(Value(2), 'min'),
                      (Value(3), 'max')])).order_by('pk'),
             [(1, None, 1, 1), (2, 2, 2, 3), (3, 4, 3, 4), (2, 2, 2, 3), (3, 4, 3, 4), (3, 4, 3, 4), (4, None, 5, 5)],
-            transform=attrgetter('integer', 'test', 'min', 'max'))
+            transform=itemgetter('integer', 'test', 'min', 'max'))
 
     def test_annotate_with_aggregation_in_condition(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 min=Min('fk_rel__integer'),
                 max=Max('fk_rel__integer')
             ).annotate(
@@ -190,21 +219,22 @@ class BaseCaseExpressionTests(TestCase):
                      (F('max'), Value('max'))],
                     output_field=models.CharField())).order_by('pk'),
             [(1, 1, 'min'), (2, 3, 'max'), (3, 4, 'max'), (2, 2, 'min'), (3, 4, 'max'), (3, 3, 'min'), (4, 5, 'min')],
-            transform=attrgetter('integer', 'integer2', 'test'))
+            transform=itemgetter('integer', 'integer2', 'test'))
 
     def test_annotate_with_aggregation_in_predicate(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 max=Max('fk_rel__integer')
             ).annotate(
                 test=self.create_expression(
                     'max',
                     [(Value(3), Value('max = 3')),
                      (Value(4), Value('max = 4'))],
+                    default=Value(''),
                     output_field=models.CharField())).order_by('pk'),
-            [(1, 1, None), (2, 3, 'max = 3'), (3, 4, 'max = 4'), (2, 3, 'max = 3'), (3, 4, 'max = 4'),
-             (3, 4, 'max = 4'), (4, 5, None)],
-            transform=attrgetter('integer', 'max', 'test'))
+            [(1, 1, ''), (2, 3, 'max = 3'), (3, 4, 'max = 4'), (2, 3, 'max = 3'), (3, 4, 'max = 4'),
+             (3, 4, 'max = 4'), (4, 5, '')],
+            transform=itemgetter('integer', 'max', 'test'))
 
     def test_in_subquery(self):
         self.assertQuerysetEqual(
@@ -370,7 +400,7 @@ class BaseCaseExpressionTests(TestCase):
 
     def test_filter_with_aggregation_in_value(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 min=Min('fk_rel__integer'),
                 max=Max('fk_rel__integer')
             ).filter(
@@ -379,11 +409,11 @@ class BaseCaseExpressionTests(TestCase):
                     [(Value(2), 'min'),
                      (Value(3), 'max')])).order_by('pk'),
             [(3, 4, 3, 4), (2, 2, 2, 3), (3, 4, 3, 4)],
-            transform=attrgetter('integer', 'integer2', 'min', 'max'))
+            transform=itemgetter('integer', 'integer2', 'min', 'max'))
 
     def test_filter_with_aggregation_in_condition(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 min=Min('fk_rel__integer'),
                 max=Max('fk_rel__integer')
             ).filter(
@@ -392,11 +422,11 @@ class BaseCaseExpressionTests(TestCase):
                     [(F('min'), Value(2)),
                      (F('max'), Value(3))])).order_by('pk'),
             [(3, 4, 3, 4), (2, 2, 2, 3), (3, 4, 3, 4)],
-            transform=attrgetter('integer', 'integer2', 'min', 'max'))
+            transform=itemgetter('integer', 'integer2', 'min', 'max'))
 
     def test_filter_with_aggregation_in_predicate(self):
         self.assertQuerysetEqual(
-            CaseTestModel.objects.annotate(
+            CaseTestModel.objects.values(*self.non_lob_fields).annotate(
                 max=Max('fk_rel__integer')
             ).filter(
                 integer=self.create_expression(
@@ -404,7 +434,7 @@ class BaseCaseExpressionTests(TestCase):
                     [(Value(3), Value(2)),
                      (Value(4), Value(3))])).order_by('pk'),
             [(2, 3, 3), (3, 4, 4), (2, 2, 3), (3, 4, 4), (3, 3, 4)],
-            transform=attrgetter('integer', 'integer2', 'max'))
+            transform=itemgetter('integer', 'integer2', 'max'))
 
     def test_update(self):
         CaseTestModel.objects.update(
