@@ -3,7 +3,7 @@ import warnings
 
 from django.core.exceptions import FieldError
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import RawSQL, Ref, Random, ColIndexRef
+from django.db.models.expressions import OrderBy, Random, RawSQL, Ref
 from django.db.models.query_utils import select_related_descend, QueryWrapper
 from django.db.models.sql.constants import (CURSOR, SINGLE, MULTI, NO_RESULTS,
         ORDER_DIR, GET_ITERATOR_CHUNK_SIZE)
@@ -234,45 +234,60 @@ class SQLCompiler(object):
 
         order_by = []
         for pos, field in enumerate(ordering):
-            if field == '?':
-                order_by.append((Random(), asc, False))
+            if hasattr(field, 'resolve_expression'):
+                if not isinstance(field, OrderBy):
+                    field = field.asc()
+                if not self.query.standard_ordering:
+                    field.reverse_ordering()
+                order_by.append((field, False))
                 continue
-            if isinstance(field, int):
-                if field < 0:
-                    field = -field
-                    int_ord = desc
-                order_by.append((ColIndexRef(field), int_ord, True))
+            if field == '?':  # random
+                order_by.append((OrderBy(Random()), False))
                 continue
+
             col, order = get_order_dir(field, asc)
+            descending = True if order == 'DESC' else False
+
             if col in self.query.annotation_select:
-                order_by.append((Ref(col, self.query.annotation_select[col]), order, True))
+                order_by.append((
+                    OrderBy(Ref(col, self.query.annotation_select[col]), descending=descending),
+                    True))
                 continue
+
             if '.' in field:
                 # This came in through an extra(order_by=...) addition. Pass it
                 # on verbatim.
                 table, col = col.split('.', 1)
-                expr = RawSQL('%s.%s' % (self.quote_name_unless_alias(table), col), [])
-                order_by.append((expr, order, False))
+                order_by.append((
+                    OrderBy(RawSQL('%s.%s' % (self.quote_name_unless_alias(table), col))),
+                    False))
                 continue
-            if not self.query._extra or get_order_dir(field)[0] not in self.query._extra:
+
+            if not self.query._extra or col not in self.query._extra:
                 # 'col' is of the form 'field' or 'field1__field2' or
                 # '-field1__field2__field', etc.
-                order_by.extend(self.find_ordering_name(field, self.query.get_meta(),
-                                                        default_order=asc))
+                order_by.extend(self.find_ordering_name(
+                    field, self.query.get_meta(), default_order=asc))
             else:
                 if col not in self.query.extra_select:
-                    order_by.append((RawSQL(*self.query.extra[col]), order, False))
+                    order_by.append((
+                        OrderBy(RawSQL(*self.query.extra[col]), descending=descending),
+                        False))
                 else:
-                    order_by.append((Ref(col, RawSQL(*self.query.extra[col])),
-                                     order, True))
+                    order_by.append((
+                        OrderBy(Ref(col, RawSQL(*self.query.extra[col])), descending=descending),
+                        True))
+
         result = []
         seen = set()
-        for expr, order, is_ref in order_by:
-            sql, params = self.compile(expr)
+        for expr, is_ref in order_by:
+            x = expr.resolve_expression(
+                self.query, allow_joins=True, reuse=None)
+            sql, params = self.compile(x)
             if (sql, tuple(params)) in seen:
                 continue
             seen.add((sql, tuple(params)))
-            result.append((expr, (sql, params, order, is_ref)))
+            result.append((x, (sql, params, is_ref)))
         return result
 
     def get_extra_select(self, order_by, select):
@@ -392,8 +407,8 @@ class SQLCompiler(object):
 
             if order_by:
                 ordering = []
-                for _, (o_sql, o_params, order, _) in order_by:
-                    ordering.append('%s %s' % (o_sql, order))
+                for _, (o_sql, o_params, _,) in order_by:
+                    ordering.append(o_sql)
                     params.extend(o_params)
                 result.append('ORDER BY %s' % ', '.join(ordering))
 
@@ -514,6 +529,7 @@ class SQLCompiler(object):
         The 'name' is of the form 'field1__field2__...__fieldN'.
         """
         name, order = get_order_dir(name, default_order)
+        descending = True if order == 'DESC' else False
         pieces = name.split(LOOKUP_SEP)
         field, targets, alias, joins, path, opts = self._setup_joins(pieces, opts, alias)
 
@@ -535,7 +551,7 @@ class SQLCompiler(object):
                                                        order, already_seen))
             return results
         targets, alias, _ = self.query.trim_joins(targets, joins, path)
-        return [(t.get_col(alias), order, False) for t in targets]
+        return [(OrderBy(t.get_col(alias), descending=descending), False) for t in targets]
 
     def _setup_joins(self, pieces, opts, alias):
         """

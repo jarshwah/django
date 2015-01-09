@@ -118,7 +118,7 @@ class CombinableMixin(object):
         )
 
 
-class ExpressionNode(CombinableMixin):
+class BaseExpression(object):
     """
     Base class for all query expressions.
     """
@@ -189,6 +189,10 @@ class ExpressionNode(CombinableMixin):
         """
         c = self.copy()
         c.is_summary = summarize
+        c.set_source_expressions([
+            expr.resolve_expression(query, allow_joins, reuse, summarize)
+            for expr in c.get_source_expressions()
+            ])
         return c
 
     def _prepare(self):
@@ -319,6 +323,59 @@ class ExpressionNode(CombinableMixin):
         """
         return [e._output_field_or_none for e in self.get_source_expressions()]
 
+    def asc(self):
+        return OrderBy(self)
+
+    def desc(self):
+        return OrderBy(self, descending=True)
+
+    def reverse_ordering(self):
+        return self
+
+
+class ExpressionNode(BaseExpression, CombinableMixin):
+    """
+    An expression that can be combined with other expressions.
+    """
+    pass
+
+
+class OrderBy(BaseExpression):
+    template = '%(expression)s %(ordering)s'
+    descending_template = 'DESC'
+
+    def __init__(self, expression, descending=False, nulls_first=False, nulls_last=False):
+        self.descending = descending
+        self.nulls_first = nulls_first
+        self.nulls_last = nulls_last
+        if not hasattr(expression, 'resolve_expression'):
+            raise ValueError('expression must be an expression type')
+        self.expression = expression
+
+    def set_source_expressions(self, exprs):
+        self.expression = exprs[0]
+
+    def get_source_expressions(self):
+        return [self.expression]
+
+    def as_sql(self, compiler, connection):
+        expression_sql, params = compiler.compile(self.expression)
+        placeholders = {'expression': expression_sql}
+        placeholders['ordering'] = self.descending_template if self.descending else ''
+        return (self.template % placeholders).rstrip(), params
+
+    def reverse_ordering(self):
+        self.descending = not self.descending
+        self.nulls_first = not self.nulls_first
+        self.nulls_last = not self.nulls_last
+        return self
+
+    def asc(self):
+        raise TypeError('Cannot call method asc on an ordered expression')
+
+    def desc(self):
+        raise TypeError('Cannot call method desc on an ordered expression')
+
 
 class Expression(ExpressionNode):
 
@@ -411,6 +468,12 @@ class F(CombinableMixin):
 
     def refs_aggregate(self, existing_aggregates):
         return refs_aggregate(self.name.split(LOOKUP_SEP), existing_aggregates)
+
+    def asc(self):
+        return OrderBy(self)
+
+    def desc(self):
+        return OrderBy(self, descending=True)
 
 
 class Func(ExpressionNode):
@@ -678,3 +741,6 @@ class DateTime(ExpressionNode):
             value = value.replace(tzinfo=None)
             value = timezone.make_aware(value, self.tzinfo)
         return value
+
+
+
