@@ -115,6 +115,7 @@ def setup(verbosity, test_labels):
         'STATIC_URL': settings.STATIC_URL,
         'STATIC_ROOT': settings.STATIC_ROOT,
         'MIDDLEWARE_CLASSES': settings.MIDDLEWARE_CLASSES,
+        'DATABASE_ROUTERS': settings.DATABASE_ROUTERS,
     }
 
     # Redirect some settings for the duration of these tests.
@@ -146,6 +147,7 @@ def setup(verbosity, test_labels):
         'auth': 'django.contrib.auth.tests.migrations',
         'contenttypes': 'contenttypes_tests.migrations',
     }
+    settings.DATABASE_ROUTERS = ['routers.DjangoTestSuiteRouter']
 
     if verbosity > 0:
         # Ensure any warnings captured to logging are piped through a verbose
