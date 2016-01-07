@@ -1384,6 +1384,8 @@ class Query(object):
         conversions (convert 'obj' in fk__id=obj to pk val using the foreign
         key field for example).
         """
+        # TODO(JOSH): TRY ENTIRE NAME, CHOP OFF LAST LOOKUP, TRY AGAIN
+        # TRANSFORMS ARE THE REST OF THE LOOKUP PATHS NOT USED.
         joins = [alias]
         # First, generate the path for the names
         path, final_field, targets, rest = self.names_to_path(

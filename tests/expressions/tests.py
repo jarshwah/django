@@ -897,6 +897,30 @@ class ValueTests(TestCase):
         self.assertEqual(UUID.objects.get().uuid, uuid.UUID('12345678901234567890123456789012'))
 
 
+class FLookupTests(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.sday = sday = datetime.date(2010, 6, 25)
+        cls.stime = stime = datetime.datetime(2010, 6, 25, 12, 15, 30, 747000)
+        cls.ex1 = Experiment.objects.create(
+            name='Lookups in F Expressions',
+            assigned=sday,
+            completed=sday + datetime.timedelta(2),
+            estimated_time=datetime.timedelta(2),
+            start=stime,
+            end=stime + datetime.timedelta(2),
+        )
+
+    def test_month_expression(self):
+        self.assertEqual(
+            Experiment.objects.aggregate(month_count=Count('assigned__month')),
+            1
+        )
+
+        'joined__assigned__month__int'
+
+
 class ReprTests(TestCase):
 
     def test_expressions(self):
