@@ -450,6 +450,122 @@ Conditional expressions allow you to use :keyword:`if` ... :keyword:`elif` ...
 :keyword:`else` logic in queries. Django natively supports SQL ``CASE``
 expressions. For more details see :doc:`conditional-expressions`.
 
+``SubQuery`` expressions
+------------------------
+
+.. currentmodule:: django.db.models.expressions
+
+.. class:: SubQuery(queryset, output_field=None)
+
+.. versionadded:: 1.11
+
+When a value is required that is dependent upon values from within a related
+object, it's possible to use an explicit ``SubQuery``. For example::
+
+    >>> from django.db.models.expressions import OuterRef, SubQuery
+    >>> largest = Size.objects.filter(relation=OuterRef('pk')).order_by('-size')
+    >>> queryset.annotate(largest_size=SubQuery(largest.values('size')[:1]))
+
+
+Referencing columns from the outer queryset
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. class:: OuterRef(field)
+
+.. versionadded:: 1.11
+
+Used when a queryset that will be used within a ``SubQuery`` needs to refer to
+a field from the outer query. It acts like an ``F`` expression, but the check
+to see if it refers to a valid field is not made until the outer queryset is
+resolved.
+
+Instances of ``OuterRef`` may be used in conjunction with nested instances
+of ``SubQuery``, to refer to a containing queryset that is not the immediate
+parent::
+
+    >>> queryset = Size.objects.filter(grandparent=OuterRef(OuterRef('pk')))
+
+
+Limiting the subquery to a single column
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There are times when it is a requirement that a single column be returned
+from a ``SubQuery``. For instance, to use a ``SubQuery`` as the target of
+an "in" lookup::
+
+    >>> queryset.filter(relation__in=SubQuery(subquery))
+
+In this case, the queryset must only return a single column: a call to
+``.values()`` with the desired column is required.
+
+
+Limiting the subquery to a single row
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To prevent multiple rows being returned in a subquery, a slice (``[:1]``)
+of the queryset is used. Using a `.get()` will fail, because the ``OuterRef``
+can not be resolved until the queryset is used within a ``SubQuery``::
+
+    >>> queryset.annotate(largest=SubQuery(subquery.values('size')[:1]))
+
+Exists subquery
+~~~~~~~~~~~~~~~
+
+.. class:: Exists(queryset)
+
+.. versionadded:: 1.11
+
+Based upon the ``SubQuery`` expression is the ``Exists`` expression, that uses
+an SQL ``EXISTS`` statement. In many cases this will perform better, as the
+database is able to stop evaluation of the subquery when the first matching
+row is found::
+
+    >> from django.db.models.expressions import Exists
+    >>> subquery = Child.objects.filter(parent=OuterRef('pk), date_range__contains=now())
+    >>> queryset.annotate(is_valid=Exists(subquery))
+
+It is not necessary to force an ``Exists`` to refer to a single column, as the
+columns are discarded, and only a boolean result is returned.
+
+
+Filtering on a SubQuery expression
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It is not currently possible to filter directly using an `Exists`::
+
+      >>> queryset.filter(Exists(subquery))
+
+It is possible on a subquery expression by first annotating the queryset,
+and then filtering based on that annotation::
+
+    >>> queryset.annotate(is_valid=Exists(subquery)).filter(is_valid=True)
+    >>> queryset.annotate(largest=SubQuery(subquery)).filter(largest__gte=55)
+
+
+Using aggregations within a SubQuery expression
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It is possible to have aggregations within a ``SubQuery``, although it
+requires a specific pattern of ```.filter()```, ``.values()`` and
+``.annotate()`` to get the grouping correct within the subquery::
+
+    >>> subquery = queryset.filter(field=OuterRef('pk')).values(
+    ...   'field').annotate(total=Sum('thing')).values('total')
+    >>> OtherModel.objects.filter(frequency__lte=SubQuery(subquery))
+
+The initial ``.filter(...)`` limits the subquery to the relevant parameters,
+the `.values('field')` ensures that the grouping will be by the related field,
+and then the `.annotate(...)` performs the aggregation. The order these
+queryset methods are applied in is important. In this case, since the
+subquery must be limited to a single column, a `.values('total')` is
+required.
+
+This is the only way to perform an aggregation within a ``SubQuery``, as
+using ``.aggregate()`` attempts to evaluate the queryset (and if there is
+an ``OuterRef``, this will not be possible to resolve).
+
+.. currentmodule:: django.db.models
+
 Raw SQL expressions
 -------------------
 

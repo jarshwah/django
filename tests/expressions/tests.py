@@ -12,8 +12,8 @@ from django.db.models.aggregates import (
     Avg, Count, Max, Min, StdDev, Sum, Variance,
 )
 from django.db.models.expressions import (
-    Case, Col, ExpressionWrapper, F, Func, OrderBy, Random, RawSQL, Ref, Value,
-    When,
+    Case, Col, Exists, ExpressionWrapper, F, Func, OrderBy, OuterRef, Random, RawSQL,
+    Ref, SubQuery, Value, When,
 )
 from django.db.models.functions import (
     Coalesce, Concat, Length, Lower, Substr, Upper,
@@ -386,6 +386,125 @@ class BasicExpressionsTests(TestCase):
             company_ceo_set__num_employees=F('company_ceo_set__num_employees')
         )
         self.assertEqual(str(qs.query).count('JOIN'), 2)
+
+    def test_outer_ref(self):
+        inner = Company.objects.filter(point_of_contact=OuterRef('pk'))
+        outer = Employee.objects.annotate(is_point_of_contact=Exists(inner))
+
+        error_message = 'This queryset contains a reference to an outer query, and may only be used in a subquery.'
+        with self.assertRaisesMessage(ValueError, error_message):
+            inner.exists()
+
+        self.assertTrue(outer.exists())
+
+    def test_subquery(self):
+        Company.objects.filter(name="Example Inc.").update(
+            point_of_contact=Employee.objects.get(firstname="Joe", lastname="Smith"),
+            ceo=Employee.objects.get(firstname="Max", lastname="Mustermann"),
+        )
+        Employee.objects.create(firstname="Bob", lastname="Brown", salary=40)
+        qs = Employee.objects.annotate(
+            is_point_of_contact=Exists(Company.objects.filter(point_of_contact=OuterRef('pk'))),
+            is_not_point_of_contact=~Exists(Company.objects.filter(point_of_contact=OuterRef('pk'))),
+            is_ceo_of_small_company=Exists(Company.objects.filter(num_employees__lt=200, ceo=OuterRef('pk'))),
+            is_ceo_small_2=~~Exists(Company.objects.filter(num_employees__lt=200, ceo=OuterRef('pk'))),
+            largest_company=SubQuery(Company.objects.order_by('-num_employees').filter(
+                models.Q(ceo=OuterRef('pk')) | models.Q(point_of_contact=OuterRef('pk'))
+            ).values('name')[:1], output_field=models.CharField())
+        ).values(
+            'firstname',
+            'is_point_of_contact',
+            'is_not_point_of_contact',
+            'is_ceo_of_small_company',
+            'is_ceo_small_2',
+            'largest_company'
+        ).order_by('firstname')
+
+        self.assertEqual([
+            {
+                'firstname': 'Bob',
+                'is_point_of_contact': False,
+                'is_not_point_of_contact': True,
+                'is_ceo_of_small_company': False,
+                'is_ceo_small_2': False,
+                'largest_company': None
+            },
+            {
+                'firstname': 'Frank',
+                'is_point_of_contact': False,
+                'is_not_point_of_contact': True,
+                'is_ceo_of_small_company': True,
+                'is_ceo_small_2': True,
+                'largest_company': 'Foobar Ltd.',
+            },
+            {
+                'firstname': 'Joe',
+                'is_point_of_contact': True,
+                'is_not_point_of_contact': False,
+                'is_ceo_of_small_company': False,
+                'is_ceo_small_2': False,
+                'largest_company': 'Example Inc.',
+            },
+            {
+                'firstname': 'Max',
+                'is_point_of_contact': False,
+                'is_not_point_of_contact': True,
+                'is_ceo_of_small_company': True,
+                'is_ceo_small_2': True,
+                'largest_company': 'Example Inc.'
+            }
+        ], list(qs))
+
+        self.assertEqual(qs.values('pk').filter(is_point_of_contact=True).count(), 1)
+        # Sanity check: another (less elegant) way to write the same query: this will use a
+        # LEFT OUTER JOIN and an IS NULL, which is probably less efficient than an EXISTS()
+        self.assertEqual(Employee.objects.exclude(company_point_of_contact_set=None).values('pk').count(), 1)
+
+    def test_in_subquery(self):
+        # This is a contrived test (and you really wouldn't write this query), but it
+        # is a succint way to test the __in=SubQuery() construct.
+        small_companies = Company.objects.filter(num_employees__lt=200).values('pk')
+        subquery_test = Company.objects.filter(pk__in=SubQuery(small_companies))
+
+        self.assertEqual(subquery_test.count(), 2)
+
+        subquery_test2 = Company.objects.filter(pk=SubQuery(small_companies.filter(num_employees=3)))
+        self.assertEqual(subquery_test2.count(), 1)
+
+    def test_nested_subquery(self):
+        inner = Company.objects.filter(point_of_contact=OuterRef('pk'))
+        outer = Employee.objects.annotate(is_point_of_contact=Exists(inner))
+        contrived = Employee.objects.annotate(
+            is_point_of_contact=SubQuery(outer.filter(pk=OuterRef('pk')).values('is_point_of_contact'),
+                                         output_field=models.BooleanField()))
+
+        self.assertEqual(sorted(contrived.values_list()), sorted(outer.values_list()))
+
+    def test_nested_subquery_outer_ref_2(self):
+        first = Time.objects.create(time='09:00')
+        second = Time.objects.create(time='17:00')
+        third = Time.objects.create(time='21:00')
+        SimulationRun.objects.bulk_create([
+            SimulationRun(start=first, end=second, midpoint='12:00'),
+            SimulationRun(start=first, end=third, midpoint='15:00'),
+            SimulationRun(start=second, end=first, midpoint='00:00'),
+        ])
+
+        inner = Time.objects.filter(time=OuterRef(OuterRef('time')), pk=OuterRef('start')).values('time')
+        middle = SimulationRun.objects.annotate(other=SubQuery(inner)).values('other')[:1]
+        outer = Time.objects.annotate(other=SubQuery(middle, output_field=models.TimeField()))
+        # This is another contrived example, but it exercises the double-outer-ref form.
+        self.assertEqual(len(outer), 3)
+
+    def test_annotations_within_subquery(self):
+        Company.objects.filter(num_employees__lt=50).update(ceo=Employee.objects.get(firstname='Frank'))
+        inner = Company.objects.filter(
+            ceo=OuterRef('pk')
+        ).values('ceo').annotate(total_employees=models.Sum('num_employees')).values('total_employees')
+        outer = Employee.objects.annotate(total_employees=SubQuery(inner)).filter(salary__lte=SubQuery(inner))
+        self.assertEqual(list(outer.order_by('-total_employees').values('salary', 'total_employees')), [
+            {'salary': 10, 'total_employees': 2300}, {'salary': 20, 'total_employees': 35}
+        ])
 
 
 class IterableLookupInnerExpressionsTests(TestCase):
