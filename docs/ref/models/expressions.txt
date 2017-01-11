@@ -520,7 +520,7 @@ an SQL ``EXISTS`` statement. In many cases this will perform better, as the
 database is able to stop evaluation of the subquery when the first matching
 row is found::
 
-    >> from django.db.models.expressions import Exists
+    >>> from django.db.models.expressions import Exists
     >>> subquery = Child.objects.filter(parent=OuterRef('pk), date_range__contains=now())
     >>> queryset.annotate(is_valid=Exists(subquery))
 
