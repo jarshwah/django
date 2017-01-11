@@ -481,12 +481,12 @@ class ResolvedOuterRef(F):
     """
     An object that contains a reference to an outer query.
 
-    In this case, the reference to the outer query has been resolved, because the
-    inner query has been used as a subquery.
+    In this case, the reference to the outer query has been resolved, because
+    the inner query has been used as a subquery.
     """
     def as_sql(self, *args, **kwargs):
         raise ValueError(
-            'This queryset contains a reference to an outer query, and may '
+            'This queryset contains a reference to an outer query and may '
             'only be used in a subquery.'
         )
 
@@ -502,7 +502,7 @@ class OuterRef(F):
 
     def as_sql(self, *args, **kwargs):
         raise FieldError(
-            'This queryset contains an unresolved reference to an outer query, '
+            'This queryset contains an unresolved reference to an outer query '
             'and may not be evaluated.'
         )
 
