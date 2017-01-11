@@ -391,7 +391,7 @@ class BasicExpressionsTests(TestCase):
         inner = Company.objects.filter(point_of_contact=OuterRef('pk'))
         outer = Employee.objects.annotate(is_point_of_contact=Exists(inner))
 
-        error_message = 'This queryset contains a reference to an outer query, and may only be used in a subquery.'
+        error_message = 'This queryset contains a reference to an outer query and may only be used in a subquery.'
         with self.assertRaisesMessage(ValueError, error_message):
             inner.exists()
 
