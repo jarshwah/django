@@ -420,6 +420,14 @@ class BasicExpressionsTests(TestCase):
             'largest_company'
         ).order_by('firstname')
 
+        results = list(qs)
+        # Work around for Oracle treating null strings as empty strings. I would
+        # have used Coalesce(subq, Value('')) here except for the bug in
+        # cx_Oracle mentioned here: https://code.djangoproject.com/ticket/23843
+        bob = results[0]
+        if bob['largest_company'] == '':
+            bob['largest_company'] = None
+
         self.assertEqual([
             {
                 'firstname': 'Bob',
@@ -427,7 +435,7 @@ class BasicExpressionsTests(TestCase):
                 'is_not_point_of_contact': True,
                 'is_ceo_of_small_company': False,
                 'is_ceo_small_2': False,
-                'largest_company': None
+                'largest_company': None,
             },
             {
                 'firstname': 'Frank',
@@ -453,7 +461,7 @@ class BasicExpressionsTests(TestCase):
                 'is_ceo_small_2': True,
                 'largest_company': 'Example Inc.'
             }
-        ], list(qs))
+        ], results)
 
         self.assertEqual(qs.values('pk').filter(is_point_of_contact=True).count(), 1)
         # Sanity check: another (less elegant) way to write the same query: this will use a

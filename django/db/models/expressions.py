@@ -1013,6 +1013,15 @@ class Exists(SubQuery):
             sql = 'NOT {}'.format(sql)
         return sql, params
 
+    def as_oracle(self, compiler, connection, template=None, **extra_context):
+        # Oracle doesn't allow EXISTS() in the SELECT list, so we must wrap it
+        # with a CASE WHEN expression. Since Django's When expression requires
+        # a left hand side (column) to compare against, we must change the
+        # template ourselves.
+        sql, params = self.as_sql(compiler, connection, template, **extra_context)
+        sql = 'CASE WHEN {} THEN 1 ELSE 0 END'.format(sql)
+        return sql, params
+
 
 class OrderBy(BaseExpression):
     template = '%(expression)s %(ordering)s'
